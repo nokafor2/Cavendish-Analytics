@@ -1,0 +1,17 @@
+apiVersion: velero.io/v1
+kind: BackupSchedule
+metadata:
+  name: cavendish-daily
+  namespace: velero
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  schedule: "0 2 * * *"  # Daily at 02:00 UTC
+  template:
+    includedNamespaces:
+      - cavendish-staging
+      - cavendish-production
+    storageLocation: default
+    ttl: 720h  # 30 days retention
+    snapshotVolumes: true
+    defaultVolumesToFsBackup: true

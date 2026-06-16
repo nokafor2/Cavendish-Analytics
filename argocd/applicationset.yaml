@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cavendish-environments
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env: staging
+            namespace: cavendish-staging
+            valuesFile: values.staging.yaml
+            syncWave: "1"
+          - env: production
+            namespace: cavendish-production
+            valuesFile: values.production.yaml
+            syncWave: "2"
+  template:
+    metadata:
+      name: "cavendish-{{env}}"
+      labels:
+        app.kubernetes.io/part-of: cavendish
+        environment: "{{env}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/YOUR_ORG/cavendish-analytics-eks.git
+        targetRevision: main
+        path: chart
+        helm:
+          valueFiles:
+            - values.yaml
+            - "{{valuesFile}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+      ignoreDifferences:
+        - group: autoscaling
+          kind: HorizontalPodAutoscaler
+          jsonPointers:
+            - /spec/replicas

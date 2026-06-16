@@ -1,0 +1,31 @@
+# Phase 0 Demo Evidence
+
+> Record timestamped curl output here after completing P0-D3.
+
+## P0-D1 — HTTP Routing
+
+```
+# Replace with your output:
+# curl -v http://api.yourname.mooo.com
+```
+
+## P0-D2 — HTTPS with cert-manager
+
+```
+# Replace with your output:
+# curl -I https://api.yourname.mooo.com
+# kubectl get certificate
+```
+
+## P0-D3 — IP Whitelist + Decommission
+
+```
+# Non-whitelisted IP (expect 403):
+# curl -v http://api.yourname.mooo.com
+
+# After deleting Ingress (expect 404):
+# curl -v http://api.yourname.mooo.com
+
+# After restoring Ingress (expect 200):
+# curl -v http://api.yourname.mooo.com
+```

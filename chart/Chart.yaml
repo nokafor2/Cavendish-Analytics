@@ -1,0 +1,12 @@
+apiVersion: v2
+name: cavendish
+description: Cavendish Analytics platform — all services via range loop templates
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - cavendish
+  - analytics
+  - fintech
+maintainers:
+  - name: Cavendish Platform Engineering

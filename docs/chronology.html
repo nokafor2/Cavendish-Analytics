@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cavendish Analytics EKS — Project Execution Chronology</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-alt: #243044;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --text-muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-soft: rgba(59, 130, 246, 0.15);
+      --green: #22c55e;
+      --green-soft: rgba(34, 197, 94, 0.15);
+      --amber: #f59e0b;
+      --amber-soft: rgba(245, 158, 11, 0.15);
+      --purple: #a855f7;
+      --purple-soft: rgba(168, 85, 247, 0.15);
+      --red: #ef4444;
+      --phase0: #06b6d4;
+      --week1: #3b82f6;
+      --week2: #8b5cf6;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1e3a5f 0%, #0f1419 60%);
+      border-bottom: 1px solid var(--border);
+      padding: 2.5rem 2rem;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header p {
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      max-width: 720px;
+    }
+
+    .meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: 1.25rem;
+    }
+
+    .meta-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .meta-chip strong { color: var(--text); }
+
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+
+    nav a:hover { background: var(--surface-alt); color: var(--text); }
+
+    main { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+    section { margin-bottom: 3rem; }
+
+    h2 {
+      font-size: 1.35rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--text);
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+
+    .card h4 {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    .card .value {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+
+    .phase-banner {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 1rem;
+    }
+
+    .phase-banner.p0 { background: rgba(6, 182, 212, 0.2); color: var(--phase0); }
+    .phase-banner.w1 { background: rgba(59, 130, 246, 0.2); color: var(--week1); }
+    .phase-banner.w2 { background: rgba(139, 92, 246, 0.2); color: var(--week2); }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 2rem;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 0.45rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--border);
+    }
+
+    .timeline-item {
+      position: relative;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: -1.65rem;
+      top: 1.5rem;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--bg);
+    }
+
+    .timeline-item.p0::before { background: var(--phase0); }
+    .timeline-item.w1::before { background: var(--week1); }
+    .timeline-item.w2::before { background: var(--week2); }
+
+    .timeline-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .day-label {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .deliverable-tag {
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+    }
+
+    .timeline-item ul {
+      margin: 0.5rem 0 0 1.25rem;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .timeline-item li { margin-bottom: 0.35rem; }
+
+    .resource-path {
+      font-family: "Cascadia Code", "Fira Code", monospace;
+      font-size: 0.8rem;
+      background: var(--surface-alt);
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      color: var(--accent);
+    }
+
+    .verify {
+      margin-top: 0.75rem;
+      padding: 0.75rem;
+      background: var(--accent-soft);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 4px 4px 0;
+      font-size: 0.85rem;
+    }
+
+    .verify strong { color: var(--accent); }
+
+    .exec-steps { margin-top: 1rem; }
+
+    .exec-step { margin-top: 1.25rem; }
+
+    .exec-step-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--phase0);
+      margin-bottom: 0.5rem;
+    }
+
+    .exec-note {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+    }
+
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      font-family: "Cascadia Code", "Fira Code", monospace;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      overflow-x: auto;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Dependency diagram */
+    .dependency-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin: 1rem 0;
+    }
+
+    .dep-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .dep-box {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+
+    .dep-arrow { color: var(--text-muted); font-size: 1.2rem; }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      margin-top: 1rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--surface-alt);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+    }
+
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .status-new { color: var(--green); }
+    .status-phase0 { color: var(--phase0); }
+
+    /* Resource development grid */
+    .resource-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .resource-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .resource-card-header {
+      padding: 0.85rem 1rem;
+      background: var(--surface-alt);
+      font-weight: 600;
+      font-size: 0.9rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .resource-card-body {
+      padding: 1rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .resource-card-body ol {
+      margin-left: 1.25rem;
+    }
+
+    .resource-card-body li { margin-bottom: 0.4rem; }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 640px) {
+      header, main, nav { padding-left: 1rem; padding-right: 1rem; }
+      .timeline { padding-left: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Cavendish Analytics — EKS Platform Execution Chronology</h1>
+  <p>Day-by-day execution plan for building a production-grade AWS EKS platform. Covers Phase 0 (k3s foundations), Week 1 (infrastructure + GitOps), and Week 2 (security, observability, DR, CI/CD).</p>
+  <div class="meta-bar">
+    <span class="meta-chip"><strong>Company:</strong> Cavendish Analytics Ltd</span>
+    <span class="meta-chip"><strong>Duration:</strong> 3 days Phase 0 + 2 weeks EKS</span>
+    <span class="meta-chip"><strong>Start:</strong> Jun 02, 2026</span>
+    <span class="meta-chip"><strong>Deliverables:</strong> 17 verified checkpoints</span>
+    <span class="meta-chip"><strong>Region:</strong> eu-west-2 (London)</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#dependencies">Dependencies</a>
+  <a href="#phase0">Phase 0</a>
+  <a href="#week1">Week 1</a>
+  <a href="#week2">Week 2</a>
+  <a href="#resources">Resource Development</a>
+  <a href="#deliverables">Deliverables</a>
+  <a href="#incidents">Incident Mapping</a>
+</nav>
+
+<main>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <h2>Project Overview</h2>
+    <div class="overview-grid">
+      <div class="card">
+        <h4>Phase 0</h4>
+        <div class="value" style="color: var(--phase0);">3 Days</div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">k3s + Nginx Ingress + cert-manager + FreeDNS — manual reverse proxy foundations</p>
+      </div>
+      <div class="card">
+        <h4>Week 1</h4>
+        <div class="value" style="color: var(--week1);">5 Days</div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">Terraform, EKS, Helm, ArgoCD, IRSA, TLS via ALB + ACM</p>
+      </div>
+      <div class="card">
+        <h4>Week 2</h4>
+        <div class="value" style="color: var(--week2);">5 Days</div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">PostgreSQL, HPA, NetworkPolicy, observability, DR, CI/CD</p>
+      </div>
+      <div class="card">
+        <h4>Repository</h4>
+        <div class="value" style="font-size: 1rem; font-family: monospace;">cavendish-analytics-eks/</div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">17 directories — app, chart, terraform, argocd, monitoring, velero, phase0, docs</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPENDENCIES -->
+  <section id="dependencies">
+    <h2>Execution Dependency Flow</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1rem;">Resources must be built in this order. Each layer depends on the previous.</p>
+    <div class="dependency-flow">
+      <div class="dep-row">
+        <span class="dep-box" style="border-color: var(--phase0);">Phase 0: k3s + Ingress + TLS</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">Terraform: VPC + EKS + IRSA</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">EKS Add-ons (ALB, ExternalDNS, CSI)</span>
+      </div>
+      <div class="dep-row">
+        <span class="dep-box">Helm Chart + ArgoCD ApplicationSet</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">PostgreSQL StatefulSet + Backups</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">Security (NetworkPolicy, RBAC, PSS)</span>
+      </div>
+      <div class="dep-row">
+        <span class="dep-box">Observability (Prometheus + Grafana)</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">Velero DR + pg_dump Restore Test</span>
+        <span class="dep-arrow">→</span>
+        <span class="dep-box">GitHub Actions CI/CD (OIDC)</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE 0 -->
+  <section id="phase0">
+    <span class="phase-banner p0">Phase 0 — 3 Days Before Week 1</span>
+    <h2>Reverse Proxy Foundations (k3s)</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Build manually on a single EC2 instance. Every component has a direct EKS equivalent — see <span class="resource-path">docs/phase0-to-eks-mapping.md</span>.</p>
+
+    <div class="timeline">
+      <div class="timeline-item p0">
+        <div class="timeline-header">
+          <span class="day-label">Day 1 — k3s + Nginx Ingress + DNS</span>
+          <span class="deliverable-tag">P0-D1</span>
+        </div>
+        <ul>
+          <li>Launch EC2 (t3.small), open ports 22, 80, 443, 6443</li>
+          <li>Install k3s with Traefik disabled</li>
+          <li>Helm install Nginx Ingress Controller → confirm <code>IngressClass: nginx</code></li>
+          <li>Register FreeDNS subdomain: <code>api.yourname.mooo.com</code> → EC2 public IP</li>
+          <li>Deploy placeholder app + Ingress with Host rule</li>
+        </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Day 1</h3>
+          <p class="exec-note">Prerequisites: FreeDNS account (Afraid.org), <code>kubectl</code> and <code>helm</code> on your local machine. Replace <code>&lt;EC2_PUBLIC_IP&gt;</code>, <code>your-key.pem</code>, and <code>api.yourname.mooo.com</code> with your values.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 1 — Launch EC2</div>
+            <p class="exec-note">Create a t3.small (Ubuntu 22.04). Security group inbound: 22 (SSH), 80 (HTTP), 443 (HTTPS), 6443 (k3s API). Note the public IP.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 2 — SSH into EC2 and install CLI tools</div>
+            <pre class="code-block">ssh -i your-key.pem ubuntu@&lt;EC2_PUBLIC_IP&gt;
+
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 755 kubectl /usr/local/bin/kubectl
+
+# helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 3 — Install k3s (Traefik disabled)</div>
+            <pre class="code-block">curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" sh -
+
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown $(id -u):$(id -g) ~/.kube/config
+
+kubectl get nodes
+# Expected: one node in Ready state</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 4 — Install Nginx Ingress Controller</div>
+            <pre class="code-block">helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace
+
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=120s
+
+kubectl get ingressclass
+# Expected: nginx with controller ingress-nginx/ingress-nginx</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 5 — Register FreeDNS subdomain</div>
+            <p class="exec-note">At <a href="https://freedns.afraid.org/" style="color: var(--accent);">freedns.afraid.org</a>, create an A record: <code>api.yourname.mooo.com</code> → EC2 public IP. Wait 5–15 minutes for propagation.</p>
+            <pre class="code-block">nslookup api.yourname.mooo.com
+# Expected: resolves to your EC2 public IP</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 6 — Clone repo and deploy placeholder app</div>
+            <pre class="code-block">git clone &lt;your-repo-url&gt; Cavendish-Project
+cd Cavendish-Project/phase0
+
+kubectl apply -f manifests/http-echo-deployment.yaml
+kubectl get pods
+# Expected: http-echo pod Running</pre>
+            <p class="exec-note">Manifest: <span class="resource-path">phase0/manifests/http-echo-deployment.yaml</span></p>
+            <pre class="code-block">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-echo
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-echo
+  template:
+    metadata:
+      labels:
+        app: http-echo
+    spec:
+      containers:
+        - name: http-echo
+          image: hashicorp/http-echo:1.0.0
+          args: ["-text=Cavendish Phase 0 — routed from inside the cluster"]
+          ports:
+            - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: http-echo
+  namespace: default
+spec:
+  selector:
+    app: http-echo
+  ports:
+    - port: 80
+      targetPort: 5678</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 7 — Create Ingress with Host rule</div>
+            <p class="exec-note">Replace <code>api.yourname.mooo.com</code> with your FreeDNS subdomain before applying.</p>
+            <pre class="code-block"># Edit manifests/http-echo-ingress.yaml — set your host, then:
+kubectl apply -f manifests/http-echo-ingress.yaml
+kubectl get ingress
+# Expected: ADDRESS column shows EC2 IP (may take ~30s)</pre>
+            <p class="exec-note">Manifest: <span class="resource-path">phase0/manifests/http-echo-ingress.yaml</span></p>
+            <pre class="code-block">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: http-echo
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.yourname.mooo.com  # Replace with your FreeDNS subdomain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: http-echo
+                port:
+                  number: 80</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 8 — Verify deliverable P0-D1</div>
+            <pre class="code-block">curl http://api.yourname.mooo.com
+# Expected: HTTP 200 — body contains "Cavendish Phase 0 — routed from inside the cluster"
+
+kubectl get ingress
+# Expected: ADDRESS populated with EC2 IP
+
+curl -I http://api.yourname.mooo.com
+# Expected: HTTP/1.1 200 OK</pre>
+          </div>
+        </div>
+
+        <div class="verify">
+          <strong>Verify:</strong> <code>curl http://api.yourname.mooo.com</code> returns HTTP 200.
+          <code>kubectl get ingress</code> shows Address populated with EC2 IP.
+        </div>
+      </div>
+
+      <div class="timeline-item p0">
+        <div class="timeline-header">
+          <span class="day-label">Day 2 — cert-manager + Let's Encrypt HTTPS</span>
+          <span class="deliverable-tag">P0-D2</span>
+        </div>
+        <ul>
+          <li>Helm install cert-manager with CRDs</li>
+          <li>Apply ClusterIssuer: <span class="resource-path">phase0/manifests/cluster-issuer.yaml</span></li>
+          <li>Update Ingress with TLS block: <span class="resource-path">phase0/manifests/http-echo-ingress-tls.yaml</span></li>
+          <li>Open port 80 on security group (HTTP-01 challenge requirement)</li>
+          <li>Watch challenge: <code>kubectl get challenges -n default -w</code></li>
+          <li>Understand: ACME HTTP-01, cert storage in Secret, 90-day renewal cycle</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>kubectl get certificate</code> shows Ready: True.
+          <code>curl -I https://api.yourname.mooo.com</code> returns 200 with no cert warning.
+        </div>
+      </div>
+
+      <div class="timeline-item p0">
+        <div class="timeline-header">
+          <span class="day-label">Day 3 — IP Restriction + Decommission Pattern</span>
+          <span class="deliverable-tag">P0-D3</span>
+        </div>
+        <ul>
+          <li>Apply whitelist annotation: <span class="resource-path">phase0/manifests/http-echo-ingress-whitelist.yaml</span></li>
+          <li>Test from VPN/mobile data → expect HTTP 403</li>
+          <li>Test from allowed IP → expect HTTP 200</li>
+          <li>Delete Ingress manifest → subdomain returns 404</li>
+          <li>Restore manifest → returns 200 again</li>
+          <li>Commit timestamped curl output to <span class="resource-path">docs/phase0-demo.txt</span></li>
+          <li>Write Phase 0 → EKS mapping paragraph in docs</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> Non-whitelisted IP → 403. Delete Ingress → 404. Restore → 200.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WEEK 1 -->
+  <section id="week1">
+    <span class="phase-banner w1">Week 1 — Infrastructure & GitOps</span>
+    <h2>Days 1–5: Terraform, EKS, Helm, ArgoCD</h2>
+
+    <div class="timeline">
+      <div class="timeline-item w1">
+        <div class="timeline-header">
+          <span class="day-label">Monday — Terraform Bootstrap + VPC + EKS</span>
+          <span class="deliverable-tag">D1</span>
+        </div>
+        <ul>
+          <li>Bootstrap S3 state bucket + DynamoDB lock table (one-time)</li>
+          <li>Configure <span class="resource-path">terraform/main.tf</span> — VPC module with public/private subnets, NAT gateway</li>
+          <li>Provision EKS cluster + managed node group (min 2, max 6)</li>
+          <li>Enable IRSA on cluster; install EBS CSI driver add-on</li>
+          <li>Create ECR repositories for analytics-api, dashboard, webhook-processor</li>
+          <li>Create S3 buckets: pg_backups, velero</li>
+          <li><code>terraform plan</code> → review → <code>terraform apply</code></li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>terraform show</code> confirms all resources.
+          <code>kubectl get nodes</code> shows Ready nodes. No Console-created resources.
+        </div>
+      </div>
+
+      <div class="timeline-item w1">
+        <div class="timeline-header">
+          <span class="day-label">Tuesday — IRSA Roles + EKS Add-ons</span>
+          <span class="deliverable-tag">D3, D4</span>
+        </div>
+        <ul>
+          <li>Apply <span class="resource-path">terraform/irsa.tf</span> — 5 IRSA roles + GitHub OIDC provider</li>
+          <li>Helm install AWS Load Balancer Controller (IRSA annotated SA)</li>
+          <li>Helm install ExternalDNS (Route 53 permissions via IRSA)</li>
+          <li>Helm install Secrets Store CSI Driver + AWS provider</li>
+          <li>Provision ACM certificate; complete DNS validation via Route 53</li>
+          <li>Helm install Cluster Autoscaler</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>kubectl exec</code> into Pod → <code>aws sts get-caller-identity</code> shows IRSA role ARN.
+          No AWS_ACCESS_KEY_ID anywhere in cluster or Git.
+        </div>
+      </div>
+
+      <div class="timeline-item w1">
+        <div class="timeline-header">
+          <span class="day-label">Wednesday — Helm Chart + Application</span>
+          <span class="deliverable-tag">D2, D5</span>
+        </div>
+        <ul>
+          <li>Build FastAPI app: <span class="resource-path">app/main.py</span> with /health, /metrics, portfolio endpoints</li>
+          <li>Docker build + push to ECR</li>
+          <li>Develop Helm chart range loop templates in <span class="resource-path">chart/templates/</span></li>
+          <li>Configure values.staging.yaml and values.production.yaml overrides</li>
+          <li>Create Secrets Manager secret; configure SecretProviderClass for DB credentials</li>
+          <li><code>helm lint chart/</code> → <code>helm template</code> both environments</li>
+          <li>Manual deploy to staging: <code>helm upgrade --install</code></li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>helm list -A</code> shows staging release. All Pods Running.
+          <code>env | grep DB_PASSWORD</code> inside Pod shows Secrets Manager value.
+        </div>
+      </div>
+
+      <div class="timeline-item w1">
+        <div class="timeline-header">
+          <span class="day-label">Thursday — ArgoCD + HTTPS Ingress</span>
+          <span class="deliverable-tag">D2, D3</span>
+        </div>
+        <ul>
+          <li>Helm install ArgoCD in argocd namespace</li>
+          <li>Apply ApplicationSet: <span class="resource-path">argocd/applicationset.yaml</span></li>
+          <li>Configure Ingress templates with ALB + ACM + ExternalDNS annotations</li>
+          <li>ArgoCD syncs staging and production Applications automatically</li>
+          <li>Confirm Route 53 records created by ExternalDNS</li>
+          <li>Test HTTPS on all subdomains</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>curl -I https://api.cavendish.yourdomain.com</code> returns HTTP 200.
+          ACM certificate shows Issued. No cert-manager in cluster.
+        </div>
+      </div>
+
+      <div class="timeline-item w1">
+        <div class="timeline-header">
+          <span class="day-label">Friday — PostgreSQL StatefulSet + RBAC</span>
+          <span class="deliverable-tag">D13</span>
+        </div>
+        <ul>
+          <li>Deploy PostgreSQL StatefulSet: <span class="resource-path">chart/templates/statefulset.yaml</span></li>
+          <li>EBS PVC via gp3 StorageClass (EBS CSI driver)</li>
+          <li>Add postgres-exporter sidecar for database metrics</li>
+          <li>Apply ServiceAccount + Role + RoleBinding per service</li>
+          <li>Enforce Pod Security Standards (restricted) on namespaces</li>
+          <li>Verify no Pod uses default ServiceAccount</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>kubectl get pods -o jsonpath</code> — no serviceAccountName: default.
+          Privileged Pod deployment rejected by admission controller (D14 prep).
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WEEK 2 -->
+  <section id="week2">
+    <span class="phase-banner w2">Week 2 — Security, Observability, DR, CI/CD</span>
+    <h2>Days 6–10: Production Hardening</h2>
+
+    <div class="timeline">
+      <div class="timeline-item w2">
+        <div class="timeline-header">
+          <span class="day-label">Monday — NetworkPolicy + HPA</span>
+          <span class="deliverable-tag">D6, D7</span>
+        </div>
+        <ul>
+          <li>Apply default-deny NetworkPolicy: <span class="resource-path">chart/templates/networkpolicy.yaml</span></li>
+          <li>Add explicit allow rules: dashboard→api, webhook→api, api→postgres, DNS egress</li>
+          <li>Enable HPA in values.production.yaml (min 2, max 10, CPU 70%)</li>
+          <li>Run k6 load test against /api/v1/analytics/compute</li>
+          <li>Watch HPA scale: <code>kubectl get hpa -w</code></li>
+          <li>Commit output to <span class="resource-path">docs/hpa-load-test.md</span></li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> Dashboard Pod → curl analytics-api: refused. Webhook Pod → curl analytics-api: 200.
+          HPA scales from 2 to ≥5 replicas under load.
+        </div>
+      </div>
+
+      <div class="timeline-item w2">
+        <div class="timeline-header">
+          <span class="day-label">Tuesday — Observability Stack</span>
+          <span class="deliverable-tag">D8, D9</span>
+        </div>
+        <ul>
+          <li>Helm install kube-prometheus-stack: <span class="resource-path">monitoring/prometheus-values.yaml</span></li>
+          <li>Apply ServiceMonitors for analytics-api and postgres-exporter</li>
+          <li>Confirm all Prometheus targets UP including pg_cavendish</li>
+          <li>Import Grafana dashboard: <span class="resource-path">monitoring/grafana-dashboard.json</span></li>
+          <li>Verify four panels: request rate, CPU, HPA replicas, PostgreSQL active connections</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> <code>pg_stat_activity_count</code> visible in Prometheus.
+          Grafana dashboard JSON exported with all four panels live.
+        </div>
+      </div>
+
+      <div class="timeline-item w2">
+        <div class="timeline-header">
+          <span class="day-label">Wednesday — Alerting + pg_dump Backups</span>
+          <span class="deliverable-tag">D10</span>
+        </div>
+        <ul>
+          <li>Deploy PrometheusRules: <span class="resource-path">chart/templates/prometheusrule.yaml</span></li>
+          <li>Configure AlertManager receiver (Slack/webhook)</li>
+          <li>Trigger API error rate alert; confirm notification received</li>
+          <li>Resolve condition; confirm alert clears</li>
+          <li>Deploy pg_dump CronJob (every 6 hours) via IRSA to S3</li>
+          <li>Verify backup object appears in S3 bucket</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> Alert fires and notification received. Clears after condition resolved.
+          S3 bucket contains pg_dump artifacts.
+        </div>
+      </div>
+
+      <div class="timeline-item w2">
+        <div class="timeline-header">
+          <span class="day-label">Thursday — Velero DR + Restore Test</span>
+          <span class="deliverable-tag">D12</span>
+        </div>
+        <ul>
+          <li>Helm install Velero with S3 backend: <span class="resource-path">velero/values.yaml</span></li>
+          <li>Apply BackupSchedule: <span class="resource-path">velero/backup-schedule.yaml</span> (daily 02:00 UTC)</li>
+          <li>Trigger manual backup; confirm S3 upload</li>
+          <li><strong>DR test:</strong> Delete cavendish-production namespace</li>
+          <li>Velero restore namespace from backup</li>
+          <li>Restore PostgreSQL data from pg_dump in S3</li>
+          <li>Verify all Pods Running and data intact</li>
+          <li>Document RTO in <span class="resource-path">docs/dr-runbook.md</span></li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> Namespace deleted → restored → all Pods Running, data verified. Time documented.
+        </div>
+      </div>
+
+      <div class="timeline-item w2">
+        <div class="timeline-header">
+          <span class="day-label">Friday — CI/CD + Final Verification</span>
+          <span class="deliverable-tag">D11, D14</span>
+        </div>
+        <ul>
+          <li>Configure GitHub OIDC trust (Terraform output → GitHub secret AWS_ROLE_ARN)</li>
+          <li>Deploy CI pipeline: <span class="resource-path">.github/workflows/ci.yml</span> (helm lint + ECR push)</li>
+          <li>Deploy CD pipeline: <span class="resource-path">.github/workflows/deploy.yml</span> (helm upgrade --atomic)</li>
+          <li>Push code change → CI passes → CD deploys → verify revision</li>
+          <li>Final audit: Pod Security Standards enforced (privileged Pod rejected)</li>
+          <li>Complete deliverables checklist; prepare Series B due diligence summary</li>
+        </ul>
+        <div class="verify">
+          <strong>Verify:</strong> Push → ci.yml passes → deploy.yml runs → kubectl describe shows pipeline revision.
+          Namespace shows restricted PSS label; privileged Pod rejected.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESOURCE DEVELOPMENT -->
+  <section id="resources">
+    <h2>How Each Resource Is Developed</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1rem;">Detailed development approach per resource layer. Full guide: <span class="resource-path">docs/architecture.md</span></p>
+
+    <div class="resource-grid">
+      <div class="resource-card">
+        <div class="resource-card-header">Terraform (terraform/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>Bootstrap S3 + DynamoDB for remote state</li>
+            <li>VPC module — 3 AZs, public/private subnets, NAT</li>
+            <li>EKS cluster v1.29 with managed node group</li>
+            <li>ECR repos, S3 buckets, Route 53, ACM, Secrets Manager</li>
+            <li>IRSA roles in irsa.tf — OIDC trust per ServiceAccount</li>
+            <li>GitHub Actions OIDC provider for CI/CD</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">Helm Chart (chart/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>values.yaml — base service definitions (range loop source)</li>
+            <li>values.staging.yaml / values.production.yaml — env overrides</li>
+            <li>deployment.yaml — range loop over .Values.services</li>
+            <li>ingress.yaml — ALB annotations, ACM cert ARN, ExternalDNS hostname</li>
+            <li>statefulset.yaml — PostgreSQL + postgres-exporter sidecar</li>
+            <li>networkpolicy.yaml — default-deny + 4 allow rules</li>
+            <li>hpa.yaml — conditional on values.hpa.enabled</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">ArgoCD (argocd/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>Install ArgoCD via Helm in argocd namespace</li>
+            <li>ApplicationSet with list generator — staging + production</li>
+            <li>Each Application points to chart/ with env-specific values file</li>
+            <li>Automated sync with prune + selfHeal enabled</li>
+            <li>Add new environment = one line in generators list</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">Observability (monitoring/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>kube-prometheus-stack Helm install</li>
+            <li>ServiceMonitors label-matched to release</li>
+            <li>postgres-exporter sidecar exposes pg_stat_activity</li>
+            <li>Grafana dashboard JSON — 4 required panels</li>
+            <li>PrometheusRules — API error rate + DB connections</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">Security Layer</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>IRSA — no IAM users, no access keys in Git</li>
+            <li>Secrets Manager + CSI Driver — credentials never in cluster YAML</li>
+            <li>NetworkPolicy — flat networking replaced with explicit paths</li>
+            <li>RBAC — named SA + Role + RoleBinding per Pod</li>
+            <li>Pod Security Standards — restricted profile on namespaces</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">Disaster Recovery (velero/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>Velero Helm install with S3 backend via IRSA</li>
+            <li>BackupSchedule — daily 02:00 UTC, 30-day retention</li>
+            <li>pg_dump CronJob — every 6 hours to S3 via IRSA</li>
+            <li>Test: delete namespace → Velero restore → pg_dump restore</li>
+            <li>Document RTO in docs/dr-runbook.md</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">CI/CD (.github/workflows/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>ci.yml — helm lint + template validation on PR</li>
+            <li>ci.yml — docker build + ECR push on merge to main</li>
+            <li>Both use OIDC — role-to-assume, no static credentials</li>
+            <li>deploy.yml — helm upgrade --atomic --wait on CI success</li>
+            <li>Environment protection for production deploys</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="resource-card">
+        <div class="resource-card-header">Application (app/)</div>
+        <div class="resource-card-body">
+          <ol>
+            <li>FastAPI with /health, /metrics (Prometheus), portfolio endpoints</li>
+            <li>CPU-intensive /api/v1/analytics/compute for HPA load testing</li>
+            <li>DB credentials from env vars (Secrets Manager via CSI)</li>
+            <li>Non-root user, read-only root FS in Dockerfile</li>
+            <li>ECR image scanned on every push</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DELIVERABLES -->
+  <section id="deliverables">
+    <h2>Deliverables Checklist</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Ref</th>
+          <th>Deliverable</th>
+          <th>Phase</th>
+          <th>Verification</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>P0-D1</td><td>Nginx Ingress routing HTTP</td><td>Phase 0</td><td>curl http:// returns 200; Ingress Address populated</td></tr>
+        <tr><td>P0-D2</td><td>HTTPS with cert-manager</td><td>Phase 0</td><td>Certificate Ready; curl -I https:// returns 200</td></tr>
+        <tr><td>P0-D3</td><td>IP restriction + decommission</td><td>Phase 0</td><td>403 from non-whitelisted IP; delete/restore Ingress pattern</td></tr>
+        <tr><td>D1</td><td>EKS cluster provisioned by Terraform</td><td>Week 1</td><td>terraform show; kubectl get nodes Ready</td></tr>
+        <tr><td>D2</td><td>Helm deploys staging + production</td><td>Week 1</td><td>helm list -A; all Pods Running</td></tr>
+        <tr><td>D3</td><td>HTTPS via ALB + ACM</td><td>Week 1</td><td>curl -I https://api.* returns 200; no cert-manager</td></tr>
+        <tr><td>D4</td><td>IRSA — no access keys</td><td>Week 1</td><td>aws sts get-caller-identity shows IRSA role ARN</td></tr>
+        <tr><td>D5</td><td>Secrets Manager + CSI Driver</td><td>Week 1</td><td>DB_PASSWORD from Secrets Manager in Pod env</td></tr>
+        <tr><td>D6</td><td>HPA with load test evidence</td><td>Week 2</td><td>Scales 2 → ≥5 under k6 load</td></tr>
+        <tr><td>D7</td><td>NetworkPolicy enforced</td><td>Week 2</td><td>Dashboard→api refused; webhook→api 200</td></tr>
+        <tr><td>D8</td><td>Prometheus + postgres-exporter</td><td>Week 2</td><td>All targets UP; pg_stat_activity_count visible</td></tr>
+        <tr><td>D9</td><td>Grafana four-panel dashboard</td><td>Week 2</td><td>Request rate, CPU, HPA, DB connections live</td></tr>
+        <tr><td>D10</td><td>Alert fires and resolves</td><td>Week 2</td><td>PrometheusRule notification received and cleared</td></tr>
+        <tr><td>D11</td><td>GitHub Actions pipeline deploys</td><td>Week 2</td><td>Push → CI → CD → helm upgrade revision</td></tr>
+        <tr><td>D12</td><td>Disaster recovery tested</td><td>Week 2</td><td>Velero + pg_dump restore; RTO documented</td></tr>
+        <tr><td>D13</td><td>RBAC — no default SA</td><td>Week 1</td><td>Every Pod has named SA + Role + RoleBinding</td></tr>
+        <tr><td>D14</td><td>Pod Security Standards enforced</td><td>Week 2</td><td>Restricted label; privileged Pod rejected</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- INCIDENT MAPPING -->
+  <section id="incidents">
+    <h2>Incident History → Solution Mapping</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1rem;">Six incidents in eighteen months — each addressed by a specific platform component.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Incident</th>
+          <th>Root Cause</th>
+          <th>Solution Resource</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Q2</td>
+          <td>IAM access key committed to Git (S3FullAccess)</td>
+          <td>No IRSA</td>
+          <td><span class="resource-path">terraform/irsa.tf</span> + SA annotations</td>
+        </tr>
+        <tr>
+          <td>Q3</td>
+          <td>EKS config lost when engineer left (3-day rebuild)</td>
+          <td>No Terraform</td>
+          <td><span class="resource-path">terraform/main.tf</span></td>
+        </tr>
+        <tr>
+          <td>Q3</td>
+          <td>Staging 2 replicas, production 1 — undetected drift</td>
+          <td>No Helm</td>
+          <td><span class="resource-path">chart/</span> + ArgoCD ApplicationSet</td>
+        </tr>
+        <tr>
+          <td>Q4</td>
+          <td>Analytics API fell over at quarter-end (55 min manual scale)</td>
+          <td>No HPA</td>
+          <td><span class="resource-path">chart/templates/hpa.yaml</span></td>
+        </tr>
+        <tr>
+          <td>Q1</td>
+          <td>PostgreSQL PVC unavailable 40 min, no restore</td>
+          <td>No backup/DR</td>
+          <td><span class="resource-path">cronjob.yaml</span> + <span class="resource-path">velero/</span></td>
+        </tr>
+        <tr>
+          <td>Q1</td>
+          <td>Pen test — compromised Pod had unrestricted DB access</td>
+          <td>No NetworkPolicy</td>
+          <td><span class="resource-path">chart/templates/networkpolicy.yaml</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+
+<footer>
+  Cavendish Analytics Ltd — Platform Re-architecture Project &middot; Jun 2026 &middot;
+  Open <code>docs/chronology.html</code> in a browser to view this timeline
+</footer>
+
+</body>
+</html>

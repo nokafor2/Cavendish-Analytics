@@ -1,0 +1,13 @@
+# Example tfvars — copy to terraform.tfvars and fill in values
+# NEVER commit terraform.tfvars with real credentials
+
+aws_region   = "eu-west-2"
+environment  = "staging"
+project_name = "cavendish"
+domain_name  = "cavendish.example.com"
+
+github_org  = "your-github-org"
+github_repo = "cavendish-analytics-eks"
+
+# postgres_username = "cavendish"
+# postgres_password = "CHANGE_ME"

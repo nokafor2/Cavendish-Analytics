@@ -1,0 +1,34 @@
+global:
+  environment: staging
+  domain: staging.cavendish.example.com
+
+namespace:
+  name: cavendish-staging
+
+services:
+  - name: analytics-api
+    replicas: 2
+    irsa:
+      enabled: true
+      roleArn: ""  # terraform output -raw irsa_analytics_api_role_arn
+
+  - name: dashboard
+    replicas: 1
+
+  - name: webhook-processor
+    replicas: 1
+    irsa:
+      enabled: true
+      roleArn: ""
+
+postgresql:
+  storageSize: 10Gi
+  backup:
+    s3Bucket: ""  # cavendish-staging-backups-ACCOUNT_ID
+
+hpa:
+  enabled: false
+
+monitoring:
+  prometheusRule:
+    enabled: false

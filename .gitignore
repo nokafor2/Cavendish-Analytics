@@ -1,0 +1,32 @@
+# Dependencies
+
+node_modules/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform.tfvars
+
+# Secrets — never commit
+.env
+*.pem
+*.key
+credentials.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+__pycache__/
+*.pyc
+dist/
+build/
+
+# Evidence files with sensitive IPs (optional — uncomment if needed)
+# docs/phase0-demo.txt

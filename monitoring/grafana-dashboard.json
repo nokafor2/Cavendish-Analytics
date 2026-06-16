@@ -1,0 +1,79 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": []
+  },
+  "description": "Cavendish Analytics platform overview — four required panels for D9",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "API Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, endpoint)",
+          "legendFormat": "{{namespace}} — {{endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "title": "Analytics API CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"cavendish-.*\", pod=~\"analytics-api-.*\"}[5m])) by (namespace, pod)",
+          "legendFormat": "{{namespace}} — {{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" }
+      }
+    },
+    {
+      "title": "HPA Replica Count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"cavendish-.*\", horizontalpodautoscaler=\"analytics-api\"}",
+          "legendFormat": "{{namespace}} current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"cavendish-.*\", horizontalpodautoscaler=\"analytics-api\"}",
+          "legendFormat": "{{namespace}} desired"
+        }
+      ]
+    },
+    {
+      "title": "PostgreSQL Active Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count{namespace=~\"cavendish-.*\"}",
+          "legendFormat": "{{namespace}} — {{datname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["cavendish", "postgres", "hpa"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Cavendish Analytics Platform",
+  "uid": "cavendish-platform",
+  "version": 1
+}

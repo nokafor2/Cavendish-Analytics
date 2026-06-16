@@ -1,0 +1,42 @@
+{{- range .Values.services }}
+{{- if .serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: cavendish
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .name }}
+  endpoints:
+    - port: http
+      path: {{ .serviceMonitor.path }}
+      interval: {{ .serviceMonitor.interval }}
+{{- end }}
+{{- end }}
+---
+{{- if and .Values.postgresql.enabled .Values.postgresql.exporter.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-exporter
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: cavendish
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+{{- end }}

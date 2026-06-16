@@ -1,0 +1,52 @@
+# kube-prometheus-stack Helm values override
+# Install: helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -f monitoring/prometheus-values.yaml -n monitoring --create-namespace
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+grafana:
+  enabled: true
+  adminPassword: ""  # Set via --set or external secret
+  defaultDashboardsEnabled: true
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      folder: /tmp/dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: cavendish
+          orgId: 1
+          folder: Cavendish
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /tmp/dashboards
+
+alertmanager:
+  enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: default
+      group_by: ["alertname", "environment"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+    receivers:
+      - name: default
+        # Configure Slack/PagerDuty webhook here for D10 verification
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true

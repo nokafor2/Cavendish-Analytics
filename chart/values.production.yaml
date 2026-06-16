@@ -1,0 +1,46 @@
+global:
+  environment: production
+  domain: cavendish.example.com
+
+namespace:
+  name: cavendish-production
+
+services:
+  - name: analytics-api
+    replicas: 2
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+    irsa:
+      enabled: true
+      roleArn: ""
+
+  - name: dashboard
+    replicas: 2
+
+  - name: webhook-processor
+    replicas: 2
+    irsa:
+      enabled: true
+      roleArn: ""
+
+postgresql:
+  storageSize: 50Gi
+  backup:
+    s3Bucket: ""  # cavendish-production-backups-ACCOUNT_ID
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+
+monitoring:
+  prometheusRule:
+    enabled: true
+    apiErrorRateThreshold: 0.05
+    dbConnectionThreshold: 80

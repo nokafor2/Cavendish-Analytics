@@ -1,0 +1,140 @@
+# Base defaults — overridden by values.staging.yaml / values.production.yaml
+
+global:
+  environment: staging
+  domain: cavendish.example.com
+  acmCertificateArn: ""  # Set per environment — ACM cert for ALB
+  awsRegion: eu-west-2
+  imageRegistry: ""      # ECR repository URL from Terraform output
+
+namespace:
+  name: cavendish-staging
+  podSecurity:
+    enforce: restricted
+    audit: restricted
+    warn: restricted
+
+# All deployable services — iterated by range loop in templates
+services:
+  - name: analytics-api
+    component: api
+    image:
+      repository: analytics-api
+      tag: latest
+      pullPolicy: IfNotPresent
+    replicas: 2
+    port: 8000
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    irsa:
+      enabled: true
+      roleArn: ""  # Set from Terraform output
+    secrets:
+      enabled: true
+      secretProviderClass: cavendish-db-secrets
+    ingress:
+      enabled: true
+      host: api
+      path: /
+    serviceMonitor:
+      enabled: true
+      path: /metrics
+      interval: 30s
+
+  - name: dashboard
+    component: frontend
+    image:
+      repository: dashboard
+      tag: latest
+      pullPolicy: IfNotPresent
+    replicas: 1
+    port: 3000
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    irsa:
+      enabled: false
+    secrets:
+      enabled: false
+    ingress:
+      enabled: true
+      host: dashboard
+      path: /
+    serviceMonitor:
+      enabled: false
+
+  - name: webhook-processor
+    component: worker
+    image:
+      repository: webhook-processor
+      tag: latest
+      pullPolicy: IfNotPresent
+    replicas: 1
+    port: 8080
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    irsa:
+      enabled: true
+      roleArn: ""
+    secrets:
+      enabled: false
+    ingress:
+      enabled: false
+    serviceMonitor:
+      enabled: true
+      path: /metrics
+      interval: 30s
+
+postgresql:
+  enabled: true
+  image: postgres:16-alpine
+  storageClass: gp3
+  storageSize: 20Gi
+  database: cavendish
+  exporter:
+    enabled: true
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+  backup:
+    enabled: true
+    schedule: "0 */6 * * *"  # Every 6 hours
+    s3Bucket: ""             # Set from Terraform output
+    irsaRoleArn: ""
+
+hpa:
+  enabled: false
+  targetService: analytics-api
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+
+networkPolicy:
+  enabled: true
+
+monitoring:
+  prometheusRule:
+    enabled: false
+    apiErrorRateThreshold: 0.05
+    dbConnectionThreshold: 80
+
+ingress:
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    external-dns.alpha.kubernetes.io/ttl: "300"

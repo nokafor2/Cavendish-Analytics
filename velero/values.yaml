@@ -1,0 +1,38 @@
+# Velero installation values — S3 backend via IRSA
+# Install after Terraform outputs are available:
+#   velero install \
+#     --provider aws \
+#     --plugins velero/velero-plugin-for-aws:v1.9.0 \
+#     --bucket $(terraform output -raw velero_bucket) \
+#     --backup-location-config region=eu-west-2 \
+#     --snapshot-location-config region=eu-west-2 \
+#     --sa-annotations eks.amazonaws.com/role-arn=$(terraform output -raw irsa_velero_role_arn) \
+#     --use-node-agent
+
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: ""  # cavendish-{env}-velero-ACCOUNT_ID
+      config:
+        region: eu-west-2
+  volumeSnapshotLocation:
+    - name: default
+      provider: aws
+      config:
+        region: eu-west-2
+
+serviceAccount:
+  server:
+    annotations:
+      eks.amazonaws.com/role-arn: ""  # From terraform output
+
+credentials:
+  useSecret: false  # IRSA — no static credentials
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.9.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins

@@ -1,0 +1,69 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+
+jobs:
+  deploy:
+    name: Helm Upgrade (Atomic)
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name cavendish-${{ github.event.inputs.environment || 'staging' }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Deploy via Helm
+        run: |
+          ENV="${{ github.event.inputs.environment || 'staging' }}"
+          helm upgrade --install cavendish chart/ \
+            --namespace cavendish-${ENV} \
+            --create-namespace \
+            -f chart/values.yaml \
+            -f chart/values.${ENV}.yaml \
+            --set global.imageRegistry=${{ secrets.ECR_REGISTRY }} \
+            --atomic \
+            --timeout 10m \
+            --wait
+
+      - name: Verify deployment
+        run: |
+          ENV="${{ github.event.inputs.environment || 'staging' }}"
+          kubectl rollout status deployment/analytics-api -n cavendish-${ENV} --timeout=5m
+          kubectl get pods -n cavendish-${ENV}
