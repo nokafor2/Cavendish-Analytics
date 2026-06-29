@@ -1,5 +1,8 @@
-name: CD
+name: CD (GitOps promote)
 
+# GitOps deploy: CI builds + pushes the image to ECR, this workflow pins the new
+# image tag into the env value file and commits it. ArgoCD (automated sync) then
+# reconciles the cluster. No AWS auth or helm here — ArgoCD owns the deploy.
 on:
   workflow_run:
     workflows: [CI]
@@ -15,55 +18,54 @@ on:
         options:
           - staging
           - production
+      image_tag:
+        description: Image tag to deploy (defaults to the triggering commit SHA)
+        required: false
+        type: string
 
 permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: eu-west-2
+  contents: write   # push the tag-bump commit back to main
 
 jobs:
-  deploy:
-    name: Helm Upgrade (Atomic)
+  promote:
+    name: Bump image tag in Git
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    environment: ${{ github.event.inputs.environment || 'staging' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Checkout main
+        uses: actions/checkout@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          ref: main
 
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig \
-            --name cavendish-${{ github.event.inputs.environment || 'staging' }} \
-            --region ${{ env.AWS_REGION }}
-
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.0
-
-      - name: Deploy via Helm
+      - name: Resolve target environment + image tag
+        id: vars
         run: |
           ENV="${{ github.event.inputs.environment || 'staging' }}"
-          helm upgrade --install cavendish chart/ \
-            --namespace cavendish-${ENV} \
-            --create-namespace \
-            -f chart/values.yaml \
-            -f chart/values.${ENV}.yaml \
-            --set global.imageRegistry=${{ secrets.ECR_REGISTRY }} \
-            --atomic \
-            --timeout 10m \
-            --wait
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+          fi
+          echo "env=$ENV" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify deployment
+      - name: Pin image tag in values.${{ steps.vars.outputs.env }}.yaml
         run: |
-          ENV="${{ github.event.inputs.environment || 'staging' }}"
-          kubectl rollout status deployment/analytics-api -n cavendish-${ENV} --timeout=5m
-          kubectl get pods -n cavendish-${ENV}
+          ENV="${{ steps.vars.outputs.env }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          yq -i ".services.analytics-api.image.tag = \"${TAG}\"" "chart/values.${ENV}.yaml"
+          echo "----- chart/values.${ENV}.yaml -----"
+          cat "chart/values.${ENV}.yaml"
+
+      - name: Commit + push (ArgoCD syncs the change)
+        run: |
+          ENV="${{ steps.vars.outputs.env }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- "chart/values.${ENV}.yaml"; then
+            echo "No tag change for ${ENV} (already at ${TAG}); nothing to promote."
+            exit 0
+          fi
+          git add "chart/values.${ENV}.yaml"
+          git commit -m "chore(deploy): ${ENV} analytics-api -> ${TAG} [skip ci]"
+          git push origin main

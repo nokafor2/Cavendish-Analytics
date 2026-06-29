@@ -1634,15 +1634,15 @@ curl -I https://argocd.eks.ayuadomain.com
           <span class="deliverable-tag">D11, D14</span>
         </div>
         <ul>
-          <li>Configure GitHub OIDC trust (Terraform output → GitHub secret AWS_ROLE_ARN)</li>
-          <li>Deploy CI pipeline: <span class="resource-path">.github/workflows/ci.yml</span> (helm lint + ECR push)</li>
-          <li>Deploy CD pipeline: <span class="resource-path">.github/workflows/deploy.yml</span> (helm upgrade --atomic)</li>
-          <li>Push code change → CI passes → CD deploys → verify revision</li>
+          <li>Configure GitHub OIDC trust (Terraform output → GitHub secret AWS_ROLE_ARN, used by ci.yml only)</li>
+          <li>Deploy CI pipeline: <span class="resource-path">.github/workflows/ci.yml</span> (helm lint + ECR push via OIDC)</li>
+          <li>Deploy CD pipeline (GitOps): <span class="resource-path">.github/workflows/deploy.yml</span> pins the new image tag into <span class="resource-path">chart/values.&lt;env&gt;.yaml</span> and pushes — ArgoCD syncs the cluster</li>
+          <li>Push code change → CI builds + pushes image → CD bumps tag in Git → ArgoCD deploys → verify revision</li>
           <li>Final audit: Pod Security Standards enforced (privileged Pod rejected)</li>
           <li>Complete deliverables checklist; prepare Series B due diligence summary</li>
         </ul>
         <div class="verify">
-          <strong>Verify:</strong> Push → ci.yml passes → deploy.yml runs → kubectl describe shows pipeline revision.
+          <strong>Verify:</strong> Push → ci.yml passes → deploy.yml commits a tag bump → ArgoCD Application Synced/Healthy on the new revision.
           Namespace shows restricted PSS label; privileged Pod rejected.
         </div>
       </div>
@@ -1741,10 +1741,10 @@ curl -I https://argocd.eks.ayuadomain.com
         <div class="resource-card-body">
           <ol>
             <li>ci.yml — helm lint + template validation on PR</li>
-            <li>ci.yml — docker build + ECR push on merge to main</li>
-            <li>Both use OIDC — role-to-assume, no static credentials</li>
-            <li>deploy.yml — helm upgrade --atomic --wait on CI success</li>
-            <li>Environment protection for production deploys</li>
+            <li>ci.yml — docker build + ECR push on merge to main (OIDC, no static creds)</li>
+            <li>deploy.yml — GitOps: pins image tag into chart/values.&lt;env&gt;.yaml on CI success</li>
+            <li>ArgoCD auto-syncs the committed tag; no helm in the pipeline</li>
+            <li>Environment protection (workflow_dispatch) for production promotes</li>
           </ol>
         </div>
       </div>
