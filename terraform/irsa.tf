@@ -1,16 +1,12 @@
-# IRSA roles — Pod-level AWS permissions without access keys
-# Five service roles + GitHub Actions OIDC provider
+# IRSA roles — Pod-level AWS permissions without access keys.
+# Workload roles (run in var.irsa_namespace) live here; controller roles that
+# run in kube-system are defined in controllers-irsa.tf.
 
 data "aws_iam_policy_document" "eks_oidc_assume_role" {
   for_each = toset([
     "analytics-api",
-    "webhook-processor",
     "postgres-backup",
-    "external-dns",
-    "aws-load-balancer-controller",
-    "cluster-autoscaler",
     "velero",
-    "secrets-store-csi",
   ])
 
   statement {
@@ -85,11 +81,11 @@ resource "aws_iam_role_policy" "velero_s3" {
 }
 
 # ── GitHub Actions OIDC ───────────────────────────────────────────────────────
+# Account-wide provider — use data source so apply succeeds if it already exists
+# (common when another project or a prior run created it).
 
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03fa02195ada057f47e63c8b1b9"]
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 data "aws_iam_policy_document" "github_actions_assume" {
@@ -97,7 +93,7 @@ data "aws_iam_policy_document" "github_actions_assume" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
     condition {
       test     = "StringEquals"

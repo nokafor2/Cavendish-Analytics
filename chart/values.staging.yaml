@@ -1,30 +1,28 @@
 global:
   environment: staging
-  domain: staging.cavendish.example.com
+  domain: eks.ayuadomain.com
+  secretsManagerName: cavendish/staging/postgres
+  # Account-specific but NOT secret — kept in Git so ArgoCD renders without --set.
+  # Only the DB password is a secret, and that lives in AWS Secrets Manager.
+  imageRegistry: 791778419317.dkr.ecr.eu-west-2.amazonaws.com/cavendish
+  acmCertificateArn: arn:aws:acm:eu-west-2:791778419317:certificate/c2ebbad1-e580-466c-be4d-747fe60a9059
 
 namespace:
   name: cavendish-staging
 
+# Map keys deep-merge onto base values.yaml — only override what differs.
 services:
-  - name: analytics-api
+  analytics-api:
     replicas: 2
     irsa:
       enabled: true
-      roleArn: ""  # terraform output -raw irsa_analytics_api_role_arn
-
-  - name: dashboard
-    replicas: 1
-
-  - name: webhook-processor
-    replicas: 1
-    irsa:
-      enabled: true
-      roleArn: ""
+      roleArn: arn:aws:iam::791778419317:role/cavendish-analytics-api-staging
 
 postgresql:
   storageSize: 10Gi
   backup:
-    s3Bucket: ""  # cavendish-staging-backups-ACCOUNT_ID
+    s3Bucket: cavendish-staging-backups-791778419317
+    irsaRoleArn: arn:aws:iam::791778419317:role/cavendish-postgres-backup-staging
 
 hpa:
   enabled: false

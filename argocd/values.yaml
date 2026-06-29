@@ -1,0 +1,12 @@
+# ArgoCD Helm values (chart: argo/argo-cd).
+# The ALB terminates TLS using the ACM cert, so argocd-server runs in HTTP
+# ("insecure") mode behind it — avoids double TLS and gRPC redirect loops.
+configs:
+  params:
+    server.insecure: true
+
+# Keep the server Service as ClusterIP; the ALB Ingress (argocd/ingress.yaml)
+# is the only public entry point.
+server:
+  service:
+    type: ClusterIP

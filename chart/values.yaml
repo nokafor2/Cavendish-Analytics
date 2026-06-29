@@ -1,11 +1,14 @@
-# Base defaults — overridden by values.staging.yaml / values.production.yaml
+# Base defaults — overridden by values.staging.yaml / values.production.yaml.
+# services is a MAP keyed by service name so env overlays deep-merge per service
+# (Helm replaces lists but merges maps). roleArn / image are injected per env.
 
 global:
   environment: staging
   domain: cavendish.example.com
-  acmCertificateArn: ""  # Set per environment — ACM cert for ALB
+  acmCertificateArn: ""           # terraform output -raw acm_certificate_arn
   awsRegion: eu-west-2
-  imageRegistry: ""      # ECR repository URL from Terraform output
+  imageRegistry: ""               # ECR registry, e.g. <acct>.dkr.ecr.eu-west-2.amazonaws.com/cavendish
+  secretsManagerName: cavendish/staging/postgres  # Secrets Manager secret consumed by the CSI driver
 
 namespace:
   name: cavendish-staging
@@ -14,9 +17,10 @@ namespace:
     audit: restricted
     warn: restricted
 
-# All deployable services — iterated by range loop in templates
+# All deployable services — iterated by range loop in templates (range $name, $svc)
 services:
-  - name: analytics-api
+  analytics-api:
+    enabled: true
     component: api
     image:
       repository: analytics-api
@@ -33,7 +37,7 @@ services:
         memory: 256Mi
     irsa:
       enabled: true
-      roleArn: ""  # Set from Terraform output
+      roleArn: ""                 # terraform output -raw irsa_analytics_api_role_arn
     secrets:
       enabled: true
       secretProviderClass: cavendish-db-secrets
@@ -46,7 +50,9 @@ services:
       path: /metrics
       interval: 30s
 
-  - name: dashboard
+  # Placeholder service — no image built yet. Enable once dashboard/ exists in ECR.
+  dashboard:
+    enabled: false
     component: frontend
     image:
       repository: dashboard
@@ -63,16 +69,22 @@ services:
         memory: 128Mi
     irsa:
       enabled: false
+      roleArn: ""
     secrets:
       enabled: false
+      secretProviderClass: ""
     ingress:
       enabled: true
       host: dashboard
       path: /
     serviceMonitor:
       enabled: false
+      path: /metrics
+      interval: 30s
 
-  - name: webhook-processor
+  # Placeholder service — no image built yet. Enable once webhook-processor/ exists in ECR.
+  webhook-processor:
+    enabled: false
     component: worker
     image:
       repository: webhook-processor
@@ -88,12 +100,15 @@ services:
         cpu: 200m
         memory: 128Mi
     irsa:
-      enabled: true
+      enabled: false
       roleArn: ""
     secrets:
       enabled: false
+      secretProviderClass: ""
     ingress:
       enabled: false
+      host: webhook
+      path: /
     serviceMonitor:
       enabled: true
       path: /metrics
@@ -111,8 +126,8 @@ postgresql:
   backup:
     enabled: true
     schedule: "0 */6 * * *"  # Every 6 hours
-    s3Bucket: ""             # Set from Terraform output
-    irsaRoleArn: ""
+    s3Bucket: ""             # terraform output -raw pg_backups_bucket
+    irsaRoleArn: ""          # terraform output -raw irsa_postgres_backup_role_arn
 
 hpa:
   enabled: false
@@ -125,6 +140,8 @@ networkPolicy:
   enabled: true
 
 monitoring:
+  serviceMonitors:
+    enabled: false   # Enable in Week 2 after kube-prometheus-stack installs the CRD
   prometheusRule:
     enabled: false
     apiErrorRateThreshold: 0.05

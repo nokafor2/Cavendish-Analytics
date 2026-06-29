@@ -54,7 +54,7 @@ module "vpc" {
 
   azs             = slice(data.aws_availability_zones.available.names, 0, 3)
   private_subnets = var.private_subnet_cidrs
-  public_subnets  = var.public_subnet_cids
+  public_subnets  = var.public_subnet_cidrs
 
   enable_nat_gateway   = true
   single_nat_gateway   = var.environment == "staging"
@@ -83,6 +83,10 @@ module "eks" {
 
   enable_irsa = true
 
+  # Grant the IAM identity running Terraform admin access to the cluster API.
+  # Required for kubectl — without this, only node roles can authenticate.
+  enable_cluster_creator_admin_permissions = true
+
   cluster_endpoint_public_access = true
 
   eks_managed_node_groups = {
@@ -101,11 +105,10 @@ module "eks" {
   }
 
   cluster_addons = {
-    coredns                = { most_recent = true }
-    kube-proxy             = { most_recent = true }
-    vpc-cni                = { most_recent = true }
-    aws-ebs-csi-driver     = { most_recent = true }
-    snapshot-controller    = { most_recent = true }
+    coredns    = { most_recent = true }
+    kube-proxy = { most_recent = true }
+    vpc-cni    = { most_recent = true }
+    # aws-ebs-csi-driver + snapshot-controller → ebs-csi.tf (needs IRSA role first)
   }
 }
 
@@ -154,6 +157,25 @@ resource "aws_route53_zone" "main" {
   name  = var.domain_name
 }
 
+# Delegate the child subdomain from an existing parent hosted zone.
+# Looks up the parent zone (e.g. ayuadomain.com) and adds an NS record for
+# domain_name (e.g. eks.ayuadomain.com) pointing at the new zone's nameservers,
+# so the subdomain resolves without any manual Console step.
+data "aws_route53_zone" "parent" {
+  count        = var.create_route53_zone && var.parent_route53_zone_name != "" ? 1 : 0
+  name         = var.parent_route53_zone_name
+  private_zone = false
+}
+
+resource "aws_route53_record" "subdomain_delegation" {
+  count   = var.create_route53_zone && var.parent_route53_zone_name != "" ? 1 : 0
+  zone_id = data.aws_route53_zone.parent[0].zone_id
+  name    = var.domain_name
+  type    = "NS"
+  ttl     = 300
+  records = aws_route53_zone.main[0].name_servers
+}
+
 resource "aws_acm_certificate" "main" {
   domain_name               = var.domain_name
   subject_alternative_names = ["*.${var.domain_name}"]
@@ -161,6 +183,36 @@ resource "aws_acm_certificate" "main" {
 
   lifecycle {
     create_before_destroy = true
+  }
+}
+
+# DNS validation — write the CNAME records ACM requires into our hosted zone,
+# then wait for the certificate to be issued. Keyed by record name so the apex
+# and wildcard (which share one validation record) do not collide.
+resource "aws_route53_record" "acm_validation" {
+  for_each = var.create_route53_zone ? {
+    for dvo in aws_acm_certificate.main.domain_validation_options : dvo.resource_record_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }...
+  } : {}
+
+  zone_id         = aws_route53_zone.main[0].zone_id
+  name            = each.key
+  type            = each.value[0].type
+  records         = [each.value[0].record]
+  ttl             = 60
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "main" {
+  count                   = var.create_route53_zone ? 1 : 0
+  certificate_arn         = aws_acm_certificate.main.arn
+  validation_record_fqdns = [for r in aws_route53_record.acm_validation : r.fqdn]
+
+  timeouts {
+    create = "20m"
   }
 }
 

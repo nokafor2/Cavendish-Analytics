@@ -1,0 +1,36 @@
+# HTTPS Ingress for the ArgoCD UI/API, served by the AWS Load Balancer Controller.
+# - ALB terminates TLS with the ACM wildcard cert (*.eks.ayuadomain.com)
+# - ExternalDNS creates the argocd.eks.ayuadomain.com record in Route 53
+# - argocd-server runs in insecure (HTTP) mode (see argocd/values.yaml), so the
+#   ALB talks to it over plain HTTP on port 80.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-server
+    app.kubernetes.io/part-of: argocd
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-west-2:791778419317:certificate/c2ebbad1-e580-466c-be4d-747fe60a9059
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    external-dns.alpha.kubernetes.io/hostname: argocd.eks.ayuadomain.com
+    external-dns.alpha.kubernetes.io/ttl: "300"
+spec:
+  ingressClassName: alb
+  rules:
+    - host: argocd.eks.ayuadomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80

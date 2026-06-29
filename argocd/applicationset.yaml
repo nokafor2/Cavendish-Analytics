@@ -11,10 +11,13 @@ spec:
             namespace: cavendish-staging
             valuesFile: values.staging.yaml
             syncWave: "1"
-          - env: production
-            namespace: cavendish-production
-            valuesFile: values.production.yaml
-            syncWave: "2"
+          # Production is enabled once its infrastructure exists (separate
+          # Terraform workspace / cluster: IRSA roles, ECR images, Secrets
+          # Manager secret, backups bucket). Uncomment when ready.
+          # - env: production
+          #   namespace: cavendish-production
+          #   valuesFile: values.production.yaml
+          #   syncWave: "2"
   template:
     metadata:
       name: "cavendish-{{env}}"
@@ -24,7 +27,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: https://github.com/YOUR_ORG/cavendish-analytics-eks.git
+        repoURL: https://github.com/nokafor2/Cavendish-Analytics.git
         targetRevision: main
         path: chart
         helm:

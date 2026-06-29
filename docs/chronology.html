@@ -243,6 +243,17 @@
 
     .verify strong { color: var(--accent); }
 
+    .troubleshoot {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: var(--amber-soft);
+      border-left: 3px solid var(--amber);
+      border-radius: 0 4px 4px 0;
+      font-size: 0.85rem;
+    }
+
+    .troubleshoot strong { color: var(--amber); }
+
     .exec-steps { margin-top: 1rem; }
 
     .exec-step { margin-top: 1.25rem; }
@@ -612,6 +623,7 @@ spec:
 
           <div class="exec-step">
             <div class="exec-step-title">Step 8 — Verify deliverable P0-D1</div>
+            <p class="exec-note">On Windows PowerShell, use <code>curl.exe</code> (not <code>curl</code>, which aliases to Invoke-WebRequest).</p>
             <pre class="code-block">curl http://api.yourname.mooo.com
 # Expected: HTTP 200 — body contains "Cavendish Phase 0 — routed from inside the cluster"
 
@@ -619,7 +631,10 @@ kubectl get ingress
 # Expected: ADDRESS populated with EC2 IP
 
 curl -I http://api.yourname.mooo.com
-# Expected: HTTP/1.1 200 OK</pre>
+# Expected: HTTP/1.1 200 OK
+
+# Windows PowerShell:
+# curl.exe http://api.yourname.mooo.com</pre>
           </div>
         </div>
 
@@ -635,13 +650,181 @@ curl -I http://api.yourname.mooo.com
           <span class="deliverable-tag">P0-D2</span>
         </div>
         <ul>
-          <li>Helm install cert-manager with CRDs</li>
-          <li>Apply ClusterIssuer: <span class="resource-path">phase0/manifests/cluster-issuer.yaml</span></li>
-          <li>Update Ingress with TLS block: <span class="resource-path">phase0/manifests/http-echo-ingress-tls.yaml</span></li>
-          <li>Open port 80 on security group (HTTP-01 challenge requirement)</li>
-          <li>Watch challenge: <code>kubectl get challenges -n default -w</code></li>
-          <li>Understand: ACME HTTP-01, cert storage in Secret, 90-day renewal cycle</li>
+          <li>Install cert-manager CRDs separately, then Helm chart (<code>installCRDs=false</code>)</li>
+          <li>Apply ClusterIssuer (Let's Encrypt production)</li>
+          <li>Replace Day 1 Ingress with TLS-enabled manifest</li>
+          <li>Confirm port 80 open (HTTP-01 challenge) and port 443 (HTTPS)</li>
+          <li>Watch ACME challenge until Certificate is Ready</li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Day 2</h3>
+          <p class="exec-note">Prerequisites: Day 1 complete — HTTP 200 from <code>curl http://api.yourname.mooo.com</code>. SSH into the same EC2 instance. Replace <code>api.yourname.mooo.com</code> and the email in ClusterIssuer with your values.</p>
+          <p class="exec-note"><strong>t3.small note:</strong> Install CRDs and Helm in two steps with extended timeouts. Do not use <code>--set installCRDs=true</code> in one shot — it often times out on small instances.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 1 — Confirm Day 1 baseline + kubeconfig</div>
+            <p class="exec-note">If <code>kubectl</code> reports <code>permission denied</code> on <code>/etc/rancher/k3s/k3s.yaml</code>, fix kubeconfig first:</p>
+            <pre class="code-block">ssh -i your-key.pem ubuntu@&lt;EC2_PUBLIC_IP&gt;
+cd Cavendish-Project/phase0
+
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown $(id -u):$(id -g) ~/.kube/config
+chmod 600 ~/.kube/config
+
+kubectl get nodes
+# Expected: one node Ready
+
+kubectl get pods
+kubectl get ingress
+curl -I http://api.yourname.mooo.com
+# Expected: HTTP/1.1 200 OK before adding TLS</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 2 — Confirm security group ports</div>
+            <p class="exec-note">HTTP-01 challenge requires port <strong>80</strong> open to the internet. HTTPS requires port <strong>443</strong>. Both should be open from Day 1; verify in the EC2 security group if issuance fails.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 3 — Install cert-manager CRDs (separate from Helm)</div>
+            <pre class="code-block">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.crds.yaml \
+  --request-timeout=120s
+
+kubectl get crd | grep cert-manager
+# Expected: 6 CRDs — certificates, certificaterequests, clusterissuers,
+#           issuers, challenges, orders</pre>
+            <p class="exec-note">A timeout on one CRD during apply is common — re-run the same command. Confirm all 6 CRDs exist before continuing.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 4 — Install cert-manager controller via Helm</div>
+            <pre class="code-block">helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+# Install without --wait first (safer on t3.small)
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager --create-namespace \
+  --set installCRDs=false \
+  --timeout 15m
+
+kubectl get pods -n cert-manager -w
+# Expected: cert-manager, cert-manager-webhook, cert-manager-cainjector all Running
+
+# If release already exists from a failed attempt, use upgrade instead:
+# helm upgrade --install cert-manager jetstack/cert-manager \
+#   --namespace cert-manager --set installCRDs=false --timeout 15m</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 5 — Apply ClusterIssuer</div>
+            <p class="exec-note">Edit <span class="resource-path">phase0/manifests/cluster-issuer.yaml</span> — set your real email (Let's Encrypt expiry notices). Then apply:</p>
+            <pre class="code-block">kubectl apply -f manifests/cluster-issuer.yaml
+kubectl get clusterissuer
+# Expected: letsencrypt-prod   Ready   True</pre>
+            <p class="exec-note">Manifest: <span class="resource-path">phase0/manifests/cluster-issuer.yaml</span></p>
+            <pre class="code-block">apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: platform@cavendish.example.com  # Replace with your email
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 6 — Replace Ingress with TLS manifest</div>
+            <p class="exec-note">Edit <span class="resource-path">phase0/manifests/http-echo-ingress-tls.yaml</span> — replace both <code>api.yourname.mooo.com</code> entries with your FreeDNS host. This replaces the Day 1 Ingress and triggers certificate issuance.</p>
+            <pre class="code-block">kubectl apply -f manifests/http-echo-ingress-tls.yaml
+kubectl get ingress http-echo
+# Expected: TLS hosts listed under RULES</pre>
+            <p class="exec-note">Manifest: <span class="resource-path">phase0/manifests/http-echo-ingress-tls.yaml</span></p>
+            <pre class="code-block">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: http-echo
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.yourname.mooo.com  # Replace with your FreeDNS subdomain
+      secretName: http-echo-tls
+  rules:
+    - host: api.yourname.mooo.com  # Replace with your FreeDNS subdomain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: http-echo
+                port:
+                  number: 80</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 7 — Watch certificate issuance</div>
+            <p class="exec-note">cert-manager creates a temporary Ingress rule at <code>/.well-known/acme-challenge/</code> so Let's Encrypt can verify domain ownership over HTTP.</p>
+            <pre class="code-block">kubectl get certificate -w
+# Expected: http-echo-tls   Ready   True (may take 1–3 minutes)
+
+kubectl get certificaterequest
+kubectl get order
+kubectl get challenges -n default -w
+# Watch until challenges complete
+
+kubectl describe certificate http-echo-tls
+# Check Events if stuck on False</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title">Step 8 — Verify deliverable P0-D2</div>
+            <pre class="code-block">kubectl get certificate
+# Expected: READY column True
+
+kubectl get secret http-echo-tls
+# Expected: tls.crt and tls.key stored in Secret
+
+curl -I https://api.yourname.mooo.com
+# Expected: HTTP/2 200 (or HTTP/1.1 200) with no certificate warning
+
+curl https://api.yourname.mooo.com
+# Expected: HTTP 200 — same echo body as Day 1
+
+# Windows PowerShell:
+# curl.exe -I https://api.yourname.mooo.com</pre>
+            <p class="exec-note"><strong>What you learned:</strong> ACME HTTP-01 challenge, TLS cert stored in Kubernetes Secret (<code>http-echo-tls</code>), Let's Encrypt 90-day renewal handled automatically by cert-manager.</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — cert-manager on t3.small</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>permission denied</code> on k3s.yaml → run Step 1 kubeconfig commands</li>
+              <li>Helm <code>context deadline exceeded</code> → install CRDs separately (Step 3), use <code>--timeout 15m</code>, omit <code>--wait</code></li>
+              <li><code>cannot re-use a name that is still in use</code> → <code>helm upgrade --install</code> instead of <code>helm install</code></li>
+              <li><code>another operation is in progress</code> → delete stuck release secrets, then reinstall:
+                <pre class="code-block" style="margin-top: 0.5rem;">kubectl delete secret -n cert-manager -l owner=helm
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager --set installCRDs=false --timeout 15m</pre>
+              </li>
+              <li><code>TLS handshake timeout</code> on kubectl → API server overloaded: <code>sudo systemctl restart k3s</code>, wait 60s, retry</li>
+              <li>Do <strong>not</strong> delete CRDs when cleaning up a failed Helm release — only delete Helm secrets and pods in <code>cert-manager</code> namespace</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> <code>kubectl get certificate</code> shows Ready: True.
           <code>curl -I https://api.yourname.mooo.com</code> returns 200 with no cert warning.
@@ -689,6 +872,165 @@ curl -I http://api.yourname.mooo.com
           <li>Create S3 buckets: pg_backups, velero</li>
           <li><code>terraform plan</code> → review → <code>terraform apply</code></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Monday</h3>
+          <p class="exec-note">Prerequisites: AWS CLI v2 configured (<code>aws configure</code>) with an admin/bootstrap IAM identity, <code>terraform</code> &ge; 1.6, <code>kubectl</code>, and <code>helm</code> installed locally. All resources land in <code>eu-west-2</code> (London). Run from the repo root: <span class="resource-path">cd Cavendish-Project</span>.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 1 — Bootstrap the remote state backend (one-time)</div>
+            <p class="exec-note">The root module's S3 backend points at a bucket + DynamoDB table that don't exist yet. This sub-module creates them using a <strong>local</strong> backend, breaking the chicken-and-egg. You only ever run this once per account.</p>
+            <pre class="code-block">cd terraform/bootstrap
+
+terraform init
+terraform apply        # review, then type: yes
+
+# Expected outputs:
+#   state_bucket = cavendish-terraform-state
+#   lock_table   = cavendish-terraform-locks
+
+cd ..   # back to terraform/</pre>
+            <p class="exec-note">Config: <span class="resource-path">terraform/bootstrap/main.tf</span> — versioned + encrypted S3 bucket (<code>prevent_destroy</code>) and a PAY_PER_REQUEST DynamoDB lock table.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 2 — Configure variables</div>
+            <p class="exec-note">Copy the example tfvars and fill in your values. Never commit <code>terraform.tfvars</code> (it is gitignored).</p>
+            <pre class="code-block">cp terraform.tfvars.example terraform.tfvars
+
+# Edit terraform.tfvars — set at minimum:
+#   domain_name              = "eks.yourdomain.com"      # subdomain, not apex
+#   parent_route53_zone_name = "yourdomain.com"          # existing parent zone in Route 53
+#   github_org               = "your-github-username"  # repo owner (nokafor2 for personal repos)
+#   github_repo              = "Cavendish-Analytics"
+#   postgres_username        = "cavendish"
+#   postgres_password        = "&lt;a-strong-password&gt;"
+# environment defaults to "staging" (single NAT gateway = cheaper)</pre>
+            <p class="exec-note"><strong>Domain tip:</strong> use a <em>subdomain</em> (e.g. <code>eks.ayuadomain.com</code>) when the apex domain already points elsewhere (e.g. a Phase 0 EC2). Set <code>parent_route53_zone_name</code> to the existing parent zone — Terraform delegates the subdomain automatically (see callout below).</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 3 — Initialize the root module (S3 backend)</div>
+            <pre class="code-block">terraform init
+
+# Expected: "Successfully configured the backend s3"
+#           provider plugins for aws, kubernetes, helm downloaded</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 4 — Plan and review</div>
+            <pre class="code-block">terraform fmt -recursive
+terraform validate
+terraform plan -out=tfplan
+
+# Review the plan: VPC (3 AZs, public/private subnets, NAT),
+# EKS cluster + managed node group, add-ons, ECR repos, S3 buckets.</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 5 — Apply VPC + EKS + ECR + S3</div>
+            <p class="exec-note">Monday provisions the infrastructure layer. IRSA roles (<span class="resource-path">terraform/irsa.tf</span>) and the GitHub OIDC provider are deferred to Tuesday, so target the Monday resources explicitly. EKS provisioning takes ~15&ndash;20 minutes.</p>
+            <pre class="code-block">terraform apply \
+  -target=module.vpc \
+  -target=module.eks \
+  -target=aws_ecr_repository.services \
+  -target=aws_s3_bucket.pg_backups \
+  -target=aws_s3_bucket.velero \
+  -target=aws_s3_bucket_versioning.pg_backups \
+  -target=aws_s3_bucket_server_side_encryption_configuration.pg_backups
+# type: yes
+
+# To provision everything in one shot instead, run: terraform apply tfplan</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 6 — Update kubeconfig and confirm nodes</div>
+            <pre class="code-block">aws eks update-kubeconfig \
+  --name cavendish-staging \
+  --region eu-west-2
+
+kubectl get nodes
+# Expected: 2 nodes in Ready state (t3.medium)
+
+kubectl get pods -n kube-system
+# Expected: coredns, aws-node (vpc-cni), kube-proxy, ebs-csi-* Running</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 7 — Verify deliverable D1</div>
+            <pre class="code-block">terraform show | grep -E "module.eks|module.vpc"
+terraform output
+
+aws eks describe-cluster --name cavendish-staging \
+  --region eu-west-2 --query "cluster.status"
+# Expected: "ACTIVE"
+
+aws ecr describe-repositories --region eu-west-2 \
+  --query "repositories[].repositoryName"
+# Expected: cavendish/analytics-api, cavendish/dashboard, cavendish/webhook-processor
+
+# On Windows PowerShell, replace `grep` filtering with: terraform show | Select-String "module.eks"</pre>
+            <p class="exec-note"><strong>What you built:</strong> a fully Terraform-managed VPC + EKS cluster with no Console-created resources — directly addressing the Q3 incident where the EKS config was lost when an engineer left. State is now versioned in S3 and locked via DynamoDB.</p>
+          </div>
+
+          <div class="verify" style="background: var(--purple-soft); border-left-color: var(--purple);">
+            <strong style="color: var(--purple);">Phase 0 vs EKS — where are the servers?</strong>
+            <p class="exec-note" style="margin-top: 0.5rem;">There is no <code>aws_instance</code> in <span class="resource-path">terraform/main.tf</span>, but servers still exist — the role is split between an AWS-managed control plane and EC2 worker nodes created indirectly by EKS.</p>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><strong>Phase 0:</strong> one EC2 you launched ran <em>everything</em> — the k3s control plane, Nginx Ingress, and your pod.</li>
+              <li><strong>EKS control plane:</strong> the Kubernetes "brain" (API server, etcd, scheduler) is fully managed by AWS. You never see it as an EC2 — only the <code>cluster_endpoint</code> output.</li>
+              <li><strong>EKS worker nodes:</strong> the <code>eks_managed_node_groups</code> block creates an Auto Scaling Group that launches the EC2 instances (2&times; t3.medium by default) where CoreDNS, kube-proxy, vpc-cni, the EBS CSI driver, and later your app pods actually run.</li>
+            </ul>
+            <p class="exec-note" style="margin-top: 0.5rem;">So EC2 <em>is</em> created — EKS owns its lifecycle instead of you declaring it. Confirm with <code>kubectl get nodes</code> (2 Ready nodes) or <code>aws ec2 describe-instances --filters "Name=tag:eks:cluster-name,Values=cavendish-staging"</code>.</p>
+          </div>
+
+          <div class="verify" style="background: var(--green-soft); border-left-color: var(--green);">
+            <strong style="color: var(--green);">Subdomain DNS — automatic NS delegation</strong>
+            <p class="exec-note" style="margin-top: 0.5rem;">When <code>domain_name</code> is a subdomain of an existing Route 53 zone (e.g. <code>eks.ayuadomain.com</code> under <code>ayuadomain.com</code>), set <code>parent_route53_zone_name</code> in <span class="resource-path">terraform/terraform.tfvars</span>. <span class="resource-path">terraform/main.tf</span> then:</p>
+            <ol style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Creates a new hosted zone for <code>eks.yourdomain.com</code></li>
+              <li>Looks up the parent zone (<code>yourdomain.com</code>) via <code>data.aws_route53_zone.parent</code></li>
+              <li>Writes an <code>NS</code> record in the parent zone pointing <code>eks</code> at the child zone's nameservers — no manual Console step</li>
+            </ol>
+            <p class="exec-note" style="margin-top: 0.5rem;">Your apex domain (e.g. <code>ayuadomain.com</code> &rarr; EC2) is untouched. These resources are <strong>not</strong> in Monday's targeted apply — they are created on a full <code>terraform apply</code> (Tuesday, when ACM + ExternalDNS need DNS). Verify after apply:</p>
+            <pre class="code-block" style="margin-top: 0.5rem;">terraform output route53_zone_name_servers
+nslookup -type=NS eks.ayuadomain.com
+# Expected: NS records match the output nameservers</pre>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — Terraform / EKS bootstrap</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>Error: NoSuchBucket</code> on <code>terraform init</code> → run Step 1 bootstrap first; the backend bucket must exist before init</li>
+              <li><code>BucketAlreadyExists</code> in bootstrap → S3 bucket names are globally unique; set a unique <code>state_bucket_name</code> in <span class="resource-path">terraform/bootstrap/main.tf</span> and the matching <code>backend.bucket</code> in <span class="resource-path">terraform/main.tf</span></li>
+              <li><code>state lock</code> held → a previous run crashed: <code>terraform force-unlock &lt;LOCK_ID&gt;</code> (only if you are sure no apply is running)</li>
+              <li><code>UnauthorizedOperation</code> → the bootstrap IAM identity needs EC2, EKS, IAM, S3, ECR, and DynamoDB permissions</li>
+              <li>EKS node group stuck <code>CREATE_FAILED</code> → usually private subnets missing the <code>kubernetes.io/role/internal-elb</code> tag or no NAT egress; both are set by <span class="resource-path">terraform/main.tf</span></li>
+              <li><code>ResourceInUseException</code> on EKS access entry → the IAM user was already granted access manually (or a prior apply). Import into state instead of creating again:
+                <pre class="code-block" style="margin-top: 0.5rem;"># Add terraform/imports.tf with import blocks, then:
+terraform apply
+# Delete imports.tf after a successful apply</pre>
+              </li>
+              <li><code>kubectl</code> "couldn't get current server API group list" / <code>provide credentials</code> → run <code>aws eks update-kubeconfig --name cavendish-staging --region eu-west-2</code> from your PC (no SSH). If kubeconfig is correct but auth still fails, your IAM user needs an EKS access entry — set <code>enable_cluster_creator_admin_permissions = true</code> in <span class="resource-path">terraform/main.tf</span> and <code>terraform apply</code>, or grant manually:
+                <pre class="code-block" style="margin-top: 0.5rem;">aws eks create-access-entry --cluster-name cavendish-staging \
+  --principal-arn arn:aws:iam::ACCOUNT_ID:user/YOUR_USER --type STANDARD --region eu-west-2
+aws eks associate-access-policy --cluster-name cavendish-staging \
+  --principal-arn arn:aws:iam::ACCOUNT_ID:user/YOUR_USER \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --access-scope type=cluster --region eu-west-2</pre>
+              </li>
+              <li><code>EntityAlreadyExists: Provider with url https://token.actions.githubusercontent.com</code> → the GitHub OIDC provider already exists account-wide; <span class="resource-path">terraform/irsa.tf</span> uses a <code>data</code> source to reference it instead of creating a duplicate</li>
+              <li><code>unsupported Kubernetes version 1.29</code> → EKS drops old versions over time; set <code>eks_cluster_version</code> in <span class="resource-path">terraform/variables.tf</span> (default <code>1.32</code>) and re-run <code>terraform plan -out=tfplan</code></li>
+              <li><code>aws-ebs-csi-driver</code> addon timeout in <code>CREATING</code> → the driver needs an IRSA role; it is installed via <span class="resource-path">terraform/ebs-csi.tf</span> with <code>service_account_role_arn</code>. Delete any stuck addon, then re-apply:
+                <pre class="code-block" style="margin-top: 0.5rem;">aws eks delete-addon --cluster-name cavendish-staging --addon-name aws-ebs-csi-driver --region eu-west-2
+terraform plan -out=tfplan
+terraform apply tfplan</pre>
+              </li>
+              <li><code>no matching Route 53 Hosted Zone found</code> for parent → confirm <code>parent_route53_zone_name</code> matches the existing public zone exactly (e.g. <code>ayuadomain.com</code>, no trailing dot) and is in the same AWS account</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> <code>terraform show</code> confirms all resources.
           <code>kubectl get nodes</code> shows Ready nodes. No Console-created resources.
@@ -701,16 +1043,221 @@ curl -I http://api.yourname.mooo.com
           <span class="deliverable-tag">D3, D4</span>
         </div>
         <ul>
-          <li>Apply <span class="resource-path">terraform/irsa.tf</span> — 5 IRSA roles + GitHub OIDC provider</li>
+          <li>Apply IRSA roles — workloads (<span class="resource-path">terraform/irsa.tf</span>) + controllers (<span class="resource-path">terraform/controllers-irsa.tf</span>)</li>
           <li>Helm install AWS Load Balancer Controller (IRSA annotated SA)</li>
           <li>Helm install ExternalDNS (Route 53 permissions via IRSA)</li>
           <li>Helm install Secrets Store CSI Driver + AWS provider</li>
           <li>Provision ACM certificate; complete DNS validation via Route 53</li>
           <li>Helm install Cluster Autoscaler</li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Tuesday</h3>
+          <p class="exec-note">Prerequisites: Monday complete (<code>kubectl get nodes</code> shows 2 Ready nodes). Install <code>helm</code> on your PC if missing (Windows: <code>winget install Helm.Helm</code>, then <strong>close and reopen</strong> your terminal). All commands run from your PC. Helm controllers install into <code>kube-system</code>; each ServiceAccount is annotated with an IRSA role ARN that Terraform created.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 1 — Apply IRSA roles + ACM DNS validation (Terraform)</div>
+            <p class="exec-note">Controller roles (ALB, ExternalDNS, Cluster Autoscaler) use the maintained <code>iam-role-for-service-accounts-eks</code> module and live in <span class="resource-path">terraform/controllers-irsa.tf</span> (kube-system), separate from the workload roles in <span class="resource-path">terraform/irsa.tf</span>. ACM validation records are written to Route 53 and the apply waits until the certificate is <strong>Issued</strong> (can take 10–15 min).</p>
+            <pre class="code-block">cd terraform
+terraform plan -out=tfplan
+terraform apply tfplan        # waits on aws_acm_certificate_validation
+
+# Capture the role ARNs + cert for the Helm steps below:
+terraform output</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 2 — Export values used by the Helm installs</div>
+            <p class="exec-note">PowerShell — read straight from Terraform outputs so you never copy ARNs by hand.</p>
+            <pre class="code-block">$CLUSTER   = "cavendish-staging"
+$REGION    = "eu-west-2"
+$VPC_ID    = terraform output -raw vpc_id
+$ALB_ROLE  = terraform output -raw irsa_alb_controller_role_arn
+$DNS_ROLE  = terraform output -raw irsa_external_dns_role_arn
+$CA_ROLE   = terraform output -raw irsa_cluster_autoscaler_role_arn
+$ZONE_ID   = terraform output -raw route53_zone_id
+
+aws eks update-kubeconfig --name $CLUSTER --region $REGION</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 3 — AWS Load Balancer Controller</div>
+            <p class="exec-note">Creates the SA with the IRSA annotation, then installs the controller that turns Ingress resources into ALBs. Needs cluster name + VPC + region.</p>
+            <pre class="code-block">helm repo add eks https://aws.github.io/eks-charts
+helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm repo update
+
+kubectl create serviceaccount aws-load-balancer-controller -n kube-system `
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# CRITICAL: $ALB_ROLE must be set (Step 2) and non-empty before annotating.
+# If blank, the SA gets role-arn: "" and IRSA silently fails.
+echo $ALB_ROLE
+# Expected: arn:aws:iam::...:role/cavendish-alb-controller-staging
+
+kubectl annotate serviceaccount aws-load-balancer-controller -n kube-system `
+  "eks.amazonaws.com/role-arn=$ALB_ROLE" --overwrite
+
+# Verify annotation (PowerShell or Git Bash — both work):
+kubectl get sa aws-load-balancer-controller -n kube-system -o yaml | grep role-arn
+# Expected: eks.amazonaws.com/role-arn: arn:aws:iam::...:role/cavendish-alb-controller-staging
+# NOT: role-arn: ""
+
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller `
+  -n kube-system `
+  --set clusterName=$CLUSTER `
+  --set serviceAccount.create=false `
+  --set serviceAccount.name=aws-load-balancer-controller `
+  --set region=$REGION `
+  --set vpcId=$VPC_ID
+
+kubectl get deployment -n kube-system aws-load-balancer-controller
+# Expected: 2/2 READY
+
+# If you annotated after Helm was already running with an empty role, restart pods:
+# kubectl rollout restart deployment aws-load-balancer-controller -n kube-system</pre>
+            <p class="exec-note"><strong>Git Bash annotate:</strong> use quotes around the annotation key: <code>kubectl annotate serviceaccount aws-load-balancer-controller -n kube-system "eks.amazonaws.com/role-arn=$ALB_ROLE" --overwrite</code>. Run <code>export ALB_ROLE=$(terraform output -raw irsa_alb_controller_role_arn)</code> in the same shell first.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 4 — ExternalDNS</div>
+            <p class="exec-note">Watches Ingress/Service hostnames and writes records into the project hosted zone. Scoped to the zone ID so it can't touch other domains.</p>
+            <pre class="code-block">helm upgrade --install external-dns external-dns/external-dns `
+  -n kube-system `
+  --set provider=aws `
+  --set "domainFilters[0]=eks.ayuadomain.com" `
+  --set "zoneIdFilters[0]=$ZONE_ID" `
+  --set serviceAccount.create=true `
+  --set serviceAccount.name=external-dns `
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$DNS_ROLE"
+
+kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns --tail=20
+# Expected: "All records are already up to date" / no AccessDenied</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 5 — Secrets Store CSI Driver + AWS provider</div>
+            <p class="exec-note">The driver mounts Secrets Manager values as files/env. The driver itself needs no AWS role — workloads use their own IRSA role (e.g. <code>analytics-api</code>) to read secrets.</p>
+            <pre class="code-block">helm upgrade --install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver `
+  -n kube-system `
+  --set syncSecret.enabled=true `
+  --set enableSecretRotation=true
+
+kubectl apply -f https://raw.githubusercontent.com/aws/secrets-store-csi-driver-provider-aws/main/deployment/aws-provider-installer.yaml
+
+# EBS CSI is installed but no gp3 StorageClass exists by default — create it before deploying PostgreSQL:
+kubectl apply -f docs/manifests/gp3-storageclass.yaml
+
+# AWS provider needs a projected service-account token on the CSIDriver (one-time cluster fix):
+kubectl patch csidriver secrets-store.csi.k8s.io --type=json --patch-file docs/manifests/csi-tokenrequests-patch.json
+kubectl rollout restart daemonset -n kube-system -l app=secrets-store-csi-driver
+
+# Verify the driver (3/3 per node) and the AWS provider (1/1 per node).
+# The provider does NOT use the same label as the driver, so filter by name.
+kubectl get pods -n kube-system -l "app=secrets-store-csi-driver"
+
+# Option A — PowerShell:
+kubectl get pods -n kube-system | Select-String "secrets-store"
+
+# Option B — Git Bash / WSL / macOS / Linux (use grep, not Select-String):
+kubectl get pods -n kube-system | grep secrets-store
+
+# Option C — shell-agnostic (no pipe; let kubectl filter by name prefix):
+kubectl get pods -n kube-system --field-selector=status.phase=Running | findstr secrets-store
+
+# Expected (2 nodes):
+#   csi-secrets-store-provider-aws-xxxxx                1/1   Running   (AWS provider)
+#   csi-secrets-store-provider-aws-yyyyy                1/1   Running
+#   csi-secrets-store-secrets-store-csi-driver-xxxxx    3/3   Running   (driver)
+#   csi-secrets-store-secrets-store-csi-driver-yyyyy    3/3   Running</pre>
+            <p class="exec-note"><strong>Shell note:</strong> <code>Select-String</code> is PowerShell-only. In <strong>Git Bash</strong>, WSL, macOS, or Linux use <code>grep</code> instead: <code>kubectl get pods -n kube-system | grep secrets-store</code>. The AWS provider pods are named <code>csi-secrets-store-provider-aws-*</code> and carry a different label than the driver, so <code>-l "app=secrets-store-csi-driver-provider-aws"</code> returns nothing — filtering by name is the reliable check.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 6 — Cluster Autoscaler</div>
+            <p class="exec-note">Scales the managed node group when pods can't be scheduled. Auto-discovers the ASG via cluster tags.</p>
+            <pre class="code-block">helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler `
+  -n kube-system `
+  --set autoDiscovery.clusterName=$CLUSTER `
+  --set awsRegion=$REGION `
+  --set rbac.serviceAccount.create=true `
+  --set rbac.serviceAccount.name=cluster-autoscaler `
+  --set "rbac.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$CA_ROLE"
+
+kubectl get deployment -n kube-system cluster-autoscaler-aws-cluster-autoscaler
+# Expected: 1/1 READY</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 7 — Verify deliverables D3 + D4</div>
+            <p class="exec-note">Prove IRSA works end-to-end: a Pod assumes its role with <strong>no static keys</strong>, and the ACM cert is Issued for HTTPS later in the week. Controller images (ALB, ExternalDNS, etc.) do <strong>not</strong> ship the <code>aws</code> CLI — they use the AWS SDK. Use a short-lived test pod with the <code>amazon/aws-cli</code> image and the same ServiceAccount instead.</p>
+            <pre class="code-block"># 7a — ServiceAccount must have a non-empty role-arn (works in PowerShell + Git Bash)
+kubectl get sa aws-load-balancer-controller -n kube-system -o yaml | grep role-arn
+# Expected: eks.amazonaws.com/role-arn: arn:aws:iam::...:role/cavendish-alb-controller-staging
+# If you see role-arn: "" → re-run Step 3 annotate with $ALB_ROLE set, then restart deployment
+
+# 7b — Controller pods must have web-identity env vars (not access keys)
+kubectl describe pod -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller | grep AWS_ROLE_ARN
+# Expected: AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE
+
+# 7c — IRSA end-to-end test (manifest avoids kubectl run JSON issues on Windows)
+kubectl delete pod irsa-verify -n kube-system --ignore-not-found
+kubectl apply -f docs/manifests/irsa-verify-pod.yaml
+# Run-once pod: wait for Succeeded (NOT Ready — a completed pod is never Ready)
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/irsa-verify -n kube-system --timeout=90s
+kubectl logs irsa-verify -n kube-system
+kubectl delete pod irsa-verify -n kube-system
+# Expected JSON "Arn": "...assumed-role/cavendish-alb-controller-staging/..."
+# Pod STATUS shows "Completed" (0/1) — that is success for a run-once pod
+
+# 7d — No static access keys in the cluster.
+# NOTE: grepping env NAMES is misleading — the EBS CSI chart declares an
+# OPTIONAL AWS_ACCESS_KEY_ID sourced from a secret "aws-secret" that does not
+# exist (value is empty; auth is via IRSA). Check for a real secret instead:
+kubectl get secret aws-secret -n kube-system
+# Expected: Error ... NotFound  → no static keys (this is the PASS case)
+
+# Confirm the EBS CSI env is an empty optional ref, not a literal value:
+kubectl get pod -n kube-system -l app=ebs-csi-controller `
+  -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="AWS_ACCESS_KEY_ID")]}'
+# Expected: secretKeyRef ... "optional":true  (no literal "value")
+
+# 7e — ACM certificate issued (run from terraform/ on your PC)
+aws acm describe-certificate --region $REGION `
+  --certificate-arn (terraform output -raw acm_certificate_arn) `
+  --query "Certificate.Status"
+# Expected: "ISSUED"
+
+# Git Bash:
+# aws acm describe-certificate --region eu-west-2 \
+#   --certificate-arn $(terraform output -raw acm_certificate_arn) \
+#   --query "Certificate.Status"</pre>
+            <p class="exec-note"><strong>Fix empty role-arn:</strong> <code>cd terraform &amp;&amp; export ALB_ROLE=$(terraform output -raw irsa_alb_controller_role_arn)</code>, then <code>kubectl annotate sa aws-load-balancer-controller -n kube-system "eks.amazonaws.com/role-arn=$ALB_ROLE" --overwrite</code>, then <code>kubectl rollout restart deployment aws-load-balancer-controller -n kube-system</code>.</p>
+            <p class="exec-note"><strong>Why not exec into the ALB controller?</strong> Its container image has no <code>aws</code> binary. Use <span class="resource-path">docs/manifests/irsa-verify-pod.yaml</span> (Step 7c) instead.</p>
+            <p class="exec-note"><strong>What you built:</strong> Pod-level AWS access via IRSA (OIDC trust → assumed role), so no IAM user or access key exists in the cluster or Git — directly addressing the Q2 incident (committed S3 access key). ALB Controller + ExternalDNS + ACM are now ready to serve HTTPS on Thursday.</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — IRSA &amp; controllers</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>aws_acm_certificate_validation</code> hangs → the subdomain NS delegation isn't live yet; confirm <code>nslookup -type=NS eks.ayuadomain.com</code> returns the zone's AWS nameservers before apply</li>
+              <li>ExternalDNS / ALB pod <code>AccessDenied</code> or <code>WebIdentityErr</code> → the SA annotation ARN doesn't match; re-check <code>kubectl get sa &lt;name&gt; -n kube-system -o yaml</code> against <code>terraform output</code></li>
+              <li><code>Duplicate object key</code> on ACM validation → apex + wildcard share one record; the <code>for_each</code> in <span class="resource-path">terraform/main.tf</span> groups with the <code>...</code> ellipsis</li>
+              <li>Backtick line-continuations are PowerShell; on bash/macOS use <code>\</code> instead</li>
+              <li><code>Select-String</code> is PowerShell-only → in Git Bash / WSL / macOS / Linux use <code>grep</code>, e.g. <code>kubectl get pods -n kube-system | grep secrets-store</code></li>
+              <li><code>role-arn: ""</code> on the ALB ServiceAccount → <code>$ALB_ROLE</code> was empty when annotating; set it from <code>terraform output -raw irsa_alb_controller_role_arn</code>, re-annotate, then <code>kubectl rollout restart deployment aws-load-balancer-controller -n kube-system</code></li>
+              <li><code>timed out waiting for condition on pods/irsa-verify</code> → it is a run-once pod that <code>Completed</code>; wait for <code>jsonpath='{.status.phase}'=Succeeded</code> (or just <code>sleep 15</code>) instead of <code>condition=Ready</code>, then read the logs</li>
+              <li>Grep for <code>AWS_ACCESS_KEY_ID</code> shows matches on the EBS CSI controller → these are an <strong>optional, empty</strong> env ref to a non-existent <code>aws-secret</code> (the chart's static-key fallback). Auth is via IRSA. Verify with <code>kubectl get secret aws-secret -n kube-system</code> → expect <code>NotFound</code>. Not a real key, D4 still passes</li>
+              <li><code>exec: "aws": executable file not found</code> on Step 7 → controller images have no AWS CLI; use <span class="resource-path">docs/manifests/irsa-verify-pod.yaml</span> (Step 7c)</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> <code>kubectl exec</code> into Pod → <code>aws sts get-caller-identity</code> shows IRSA role ARN.
-          No AWS_ACCESS_KEY_ID anywhere in cluster or Git.
+          No AWS_ACCESS_KEY_ID anywhere in cluster or Git. ACM certificate status <code>ISSUED</code>.
         </div>
       </div>
 
@@ -728,9 +1275,144 @@ curl -I http://api.yourname.mooo.com
           <li><code>helm lint chart/</code> → <code>helm template</code> both environments</li>
           <li>Manual deploy to staging: <code>helm upgrade --install</code></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Wednesday</h3>
+          <p class="exec-note">Prerequisites: Monday + Tuesday complete (EKS up, IRSA + Secrets Store CSI installed). <strong>Docker Desktop running</strong> for the image build. Postgres credentials already live in Secrets Manager at <code>cavendish/staging/postgres</code> (created by <span class="resource-path">terraform/main.tf</span> on Monday) — no manual secret creation needed.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 1 — Chart design (range-loop over a service map)</div>
+            <p class="exec-note"><span class="resource-path">chart/values.yaml</span> defines <code>services</code> as a <strong>map keyed by name</strong> so env overlays deep-merge per service (Helm replaces lists but merges maps). Templates iterate with <code>range $name, $svc := .Values.services</code> and skip any service where <code>enabled: false</code>. Placeholder services (dashboard, webhook-processor) are disabled until their images exist — only <code>analytics-api</code> deploys today.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 2 — Build + push the image to ECR</div>
+            <p class="exec-note">PowerShell, from repo root. ECR login token feeds <code>docker login</code>; the repo was created Monday by Terraform.</p>
+            <pre class="code-block">cd terraform
+$REGION   = "eu-west-2"
+$REGISTRY = (terraform output -json ecr_repository_urls | ConvertFrom-Json).'analytics-api'
+# e.g. 791778419317.dkr.ecr.eu-west-2.amazonaws.com/cavendish/analytics-api
+$ACCT_REGISTRY = $REGISTRY.Split('/')[0]   # registry host only
+cd ..
+
+aws ecr get-login-password --region $REGION | `
+  docker login --username AWS --password-stdin $ACCT_REGISTRY
+
+docker build -t "${REGISTRY}:latest" -t "${REGISTRY}:1.0.0" app/
+docker push "${REGISTRY}:latest"
+docker push "${REGISTRY}:1.0.0"
+
+aws ecr describe-images --repository-name cavendish/analytics-api --region $REGION `
+  --query "imageDetails[].imageTags"
+# Expected: latest, 1.0.0 — and scan-on-push results available</pre>
+            <p class="exec-note">Image: <span class="resource-path">app/Dockerfile</span> (python:3.12-slim, non-root UID 1000, healthcheck). The chart sets <code>readOnlyRootFilesystem: true</code> with a writable <code>/tmp</code> emptyDir.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 3 — Lint + render both environments</div>
+            <pre class="code-block">helm lint chart/ -f chart/values.staging.yaml
+helm lint chart/ -f chart/values.production.yaml
+
+# Render only — confirms templates compile (no cluster needed)
+helm template cavendish chart/ -f chart/values.staging.yaml > $null
+echo "staging render exit: $LASTEXITCODE"
+helm template cavendish chart/ -f chart/values.production.yaml > $null
+echo "prod render exit: $LASTEXITCODE"
+# Expected: both exit codes 0
+
+# Optional — validate against the live API (may warn on CRDs not yet installed):
+# helm template cavendish chart/ -f chart/values.staging.yaml | kubectl apply --dry-run=client -f -</pre>
+            <p class="exec-note"><strong>ServiceMonitor note:</strong> <code>ServiceMonitor</code> CRDs come from kube-prometheus-stack (Week 2). They are disabled via <code>monitoring.serviceMonitors.enabled: false</code> until then — so Wednesday deploy won't fail on missing CRDs.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 4 — Gather deploy-time values from Terraform</div>
+            <p class="exec-note">Inject the per-environment ARNs/bucket/registry at install time so nothing sensitive lives in Git. The registry value is the host + chart path prefix (without the service repo name).</p>
+            <pre class="code-block">cd terraform
+$REGION    = "eu-west-2"
+$API_ROLE  = terraform output -raw irsa_analytics_api_role_arn
+$PGB_ROLE  = terraform output -raw irsa_postgres_backup_role_arn
+$PGB_BUCKET= terraform output -raw pg_backups_bucket
+$ACM       = terraform output -raw acm_certificate_arn
+# registry prefix = host + "/cavendish"
+$REGISTRY  = ((terraform output -json ecr_repository_urls | ConvertFrom-Json).'analytics-api' -replace '/analytics-api$','')
+cd ..
+
+aws eks update-kubeconfig --name cavendish-staging --region $REGION</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 5 — Deploy to staging</div>
+            <p class="exec-note">Helm creates the namespace from <span class="resource-path">chart/templates/namespace.yaml</span> (includes restricted Pod Security labels). Do <strong>not</strong> <code>kubectl create namespace</code> beforehand — that causes an ownership conflict.</p>
+            <pre class="code-block">helm upgrade --install cavendish chart/ `
+  -n cavendish-staging `
+  -f chart/values.staging.yaml `
+  --set global.imageRegistry=$REGISTRY `
+  --set global.acmCertificateArn=$ACM `
+  --set "services.analytics-api.irsa.roleArn=$API_ROLE" `
+  --set "postgresql.backup.s3Bucket=$PGB_BUCKET" `
+  --set "postgresql.backup.irsaRoleArn=$PGB_ROLE" `
+  --wait --timeout 5m
+
+helm list -n cavendish-staging
+kubectl get pods -n cavendish-staging
+# Expected: cavendish release DEPLOYED; analytics-api + postgres pods Running</pre>
+            <p class="exec-note"><strong>Git Bash:</strong> swap backticks for <code>\</code> and use <code>export VAR=$(terraform output -raw ...)</code>.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 6 — Verify deliverables D2 + D5</div>
+            <pre class="code-block"># D2 — release deployed, pods running
+helm list -n cavendish-staging
+kubectl get deploy,po -n cavendish-staging -l app.kubernetes.io/name=analytics-api
+
+# D5 — DB_PASSWORD comes from Secrets Manager via the CSI driver
+kubectl get secretproviderclass -n cavendish-staging
+# Expected: cavendish-db-secrets
+
+kubectl get secret analytics-api-db-credentials -n cavendish-staging
+# Expected: synced secret with DB_USERNAME, DB_PASSWORD (created once the pod mounts it)
+
+$POD = kubectl get pod -n cavendish-staging -l app.kubernetes.io/name=analytics-api -o jsonpath='{.items[0].metadata.name}'
+kubectl exec -n cavendish-staging $POD -- printenv DB_PASSWORD
+# Expected: the password value from Secrets Manager (NOT empty)
+
+# The analytics-api image is python:3.12-slim — it has NO curl. Probe the API with
+# Python's urllib instead (this is also how the Dockerfile HEALTHCHECK works).
+kubectl exec -n cavendish-staging $POD -- python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/v1/db/status').read().decode())"
+# Expected: {"db_host":"postgres","db_name":"cavendish","connected":true}
+
+# urlopen raises on non-200 (e.g. 503 when creds aren't mounted). Use this form to
+# always print the status code and body, success or failure:
+kubectl exec -n cavendish-staging $POD -- python -c "import urllib.request,urllib.error;
+try:
+    r=urllib.request.urlopen('http://localhost:8000/api/v1/db/status'); print(r.status, r.read().decode())
+except urllib.error.HTTPError as e:
+    print(e.code, e.read().decode())"
+# Expected: 200 {"db_host":"postgres","db_name":"cavendish","connected":true}</pre>
+            <p class="exec-note"><strong>What you built:</strong> one Helm chart deploys every service via a range loop over a service map; staging/production differ only by overlay values. DB credentials are pulled from Secrets Manager by the CSI driver using the Pod's IRSA role and surfaced as <code>DB_PASSWORD</code> — never written to Git or a plain ConfigMap (addresses the Q3 config-drift and credential-handling incidents).</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — Helm chart &amp; image</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>nil pointer evaluating interface {}.enabled</code> on render → an env overlay redefined <code>services</code> as a list; it must be a <strong>map</strong> keyed by name so values deep-merge</li>
+              <li><code>ImagePullBackOff</code> → image not pushed, or <code>global.imageRegistry</code> wrong; confirm <code>aws ecr describe-images</code> shows the tag and the registry prefix has no trailing service name</li>
+              <li><code>SecretProviderClass</code> exists but <code>analytics-api-db-credentials</code> secret missing → the synced K8s secret is created only when a Pod successfully <strong>mounts</strong> the CSI volume; check <code>kubectl describe pod</code> events for IRSA/AccessDenied on Secrets Manager</li>
+              <li><code>DB_PASSWORD</code> empty in pod → analytics-api IRSA role can't read the secret; confirm <code>services.analytics-api.irsa.roleArn</code> was set and the role's policy allows <code>secretsmanager:GetSecretValue</code> on <code>cavendish/staging/postgres</code></li>
+              <li><code>exec: "curl": executable file not found in $PATH</code> → the <code>python:3.12-slim</code> image ships no <code>curl</code>; probe the API with <code>python -c "import urllib.request; ..."</code> instead, or <code>kubectl port-forward</code> and curl from your own machine</li>
+              <li><code>invalid ownership metadata</code> on Namespace → namespace was created with <code>kubectl create</code> before Helm; delete the empty namespace (<code>kubectl delete namespace cavendish-staging</code>) and re-run <code>helm upgrade --install</code>, or adopt it:
+                <pre class="code-block" style="margin-top: 0.5rem;">kubectl label namespace cavendish-staging app.kubernetes.io/managed-by=Helm --overwrite
+kubectl annotate namespace cavendish-staging meta.helm.sh/release-name=cavendish --overwrite
+kubectl annotate namespace cavendish-staging meta.helm.sh/release-namespace=cavendish-staging --overwrite</pre>
+              </li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> <code>helm list -A</code> shows staging release. All Pods Running.
-          <code>env | grep DB_PASSWORD</code> inside Pod shows Secrets Manager value.
+          <code>kubectl exec ... printenv DB_PASSWORD</code> inside Pod shows Secrets Manager value.
         </div>
       </div>
 
@@ -740,15 +1422,105 @@ curl -I http://api.yourname.mooo.com
           <span class="deliverable-tag">D2, D3</span>
         </div>
         <ul>
-          <li>Helm install ArgoCD in argocd namespace</li>
-          <li>Apply ApplicationSet: <span class="resource-path">argocd/applicationset.yaml</span></li>
-          <li>Configure Ingress templates with ALB + ACM + ExternalDNS annotations</li>
-          <li>ArgoCD syncs staging and production Applications automatically</li>
+          <li>Helm install ArgoCD in the <code>argocd</code> namespace</li>
+          <li>Expose the ArgoCD UI over HTTPS via ALB + ACM + ExternalDNS: <span class="resource-path">argocd/ingress.yaml</span></li>
+          <li>Move the staging release to GitOps: commit account values into <span class="resource-path">chart/values.staging.yaml</span></li>
+          <li>Apply the ApplicationSet: <span class="resource-path">argocd/applicationset.yaml</span> — ArgoCD adopts and self-heals the staging release</li>
           <li>Confirm Route 53 records created by ExternalDNS</li>
-          <li>Test HTTPS on all subdomains</li>
+          <li>Test HTTPS on <code>api.eks.ayuadomain.com</code> and <code>argocd.eks.ayuadomain.com</code></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Thursday</h3>
+          <p class="exec-note">Prerequisites: Wednesday complete (staging release deployed via Helm, pods Running). The ACM wildcard cert <code>*.eks.ayuadomain.com</code> (issued Tuesday) covers both new hostnames. <strong>Key shift:</strong> account-specific values (ECR registry, ACM ARN, IRSA role ARNs, backup bucket) now live in <span class="resource-path">chart/values.staging.yaml</span> so ArgoCD renders straight from Git — no more <code>--set</code> flags. None of these are secrets; the only secret (the DB password) stays in AWS Secrets Manager.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 1 — Install ArgoCD via Helm</div>
+            <p class="exec-note"><span class="resource-path">argocd/values.yaml</span> sets <code>server.insecure: true</code> so <code>argocd-server</code> serves HTTP behind the ALB — the ALB does TLS with ACM, avoiding a double-TLS gRPC redirect loop.</p>
+            <pre class="code-block">helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+
+helm upgrade --install argocd argo/argo-cd `
+  -n argocd --create-namespace `
+  -f argocd/values.yaml `
+  --wait --timeout 10m
+
+kubectl get pods -n argocd
+# Expected: argocd-server, repo-server, application-controller, applicationset-controller,
+#           redis, dex, notifications, all Running</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 2 — Expose the ArgoCD UI over HTTPS</div>
+            <p class="exec-note">The ALB Controller provisions a load balancer from the Ingress; ExternalDNS writes the Route 53 record. The cert ARN and hostname are baked into <span class="resource-path">argocd/ingress.yaml</span>.</p>
+            <pre class="code-block">kubectl apply -f argocd/ingress.yaml
+
+# ALB provisioning + DNS take ~2-3 min. ADDRESS is the ALB hostname.
+kubectl get ingress argocd-server -n argocd
+
+# First-login password for user "admin":
+$ARGO_PWD = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ARGO_PWD))
+# Browse to https://argocd.eks.ayuadomain.com and log in.</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 3 — Push manifests so Git is the source of truth</div>
+            <p class="exec-note">ArgoCD pulls the chart + value files from GitHub. Commit the Thursday changes (real staging values, ArgoCD manifests) before applying the ApplicationSet.</p>
+            <pre class="code-block">git add chart/ argocd/ docs/chronology.html
+git commit -m "Thursday: ArgoCD install + HTTPS ingress; staging values in Git"
+git push origin main
+
+# If the repo is PRIVATE, register read credentials with ArgoCD (one-time):
+# argocd login argocd.eks.ayuadomain.com --username admin --password &lt;pwd&gt;
+# argocd repo add https://github.com/nokafor2/Cavendish-Analytics.git `
+#   --username &lt;github-user&gt; --password &lt;github-PAT&gt;</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 4 — Apply the ApplicationSet (GitOps takes over)</div>
+            <p class="exec-note"><span class="resource-path">argocd/applicationset.yaml</span> generates one Application per environment (staging now; production is commented out until its infra exists). It points at <code>chart/</code> with <code>values.yaml</code> + <code>values.staging.yaml</code>, and has <code>automated</code> sync (prune + selfHeal). It <strong>adopts</strong> the resources Helm created Wednesday — the manual <code>helm</code> release becomes redundant and ArgoCD is now the source of truth.</p>
+            <pre class="code-block">kubectl apply -f argocd/applicationset.yaml
+
+kubectl get applications -n argocd
+kubectl get application cavendish-staging -n argocd `
+  -o jsonpath="{.status.sync.status} / {.status.health.status}{'`n'}"
+# Expected: Synced / Healthy  (may show Progressing/OutOfSync briefly on first sync)</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 5 — Verify ExternalDNS + HTTPS end to end</div>
+            <pre class="code-block"># Route 53 records written by ExternalDNS (zone id from terraform output route53_zone_id)
+aws route53 list-resource-record-sets --hosted-zone-id Z049486818G6Y4KG1B1Q `
+  --query "ResourceRecordSets[?contains(Name, 'eks.ayuadomain.com')].[Name,Type]" --output table
+
+kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns --tail=20
+# Expected: "CREATE: api.eks.ayuadomain.com" / "argocd.eks.ayuadomain.com" — no AccessDenied
+
+# HTTPS through ALB + ACM (allow ~1-2 min for DNS to propagate)
+curl -I https://api.eks.ayuadomain.com/health
+curl -s https://api.eks.ayuadomain.com/api/v1/db/status
+curl -I https://argocd.eks.ayuadomain.com
+# Expected: HTTP/2 200 on /health; JSON on /db/status; 200 on the ArgoCD UI</pre>
+            <p class="exec-note"><strong>What you built:</strong> a self-healing GitOps pipeline. A push to <code>main</code> reconciles the cluster automatically — no manual <code>helm upgrade</code>. TLS is served by the ALB using the ACM wildcard cert, and ExternalDNS manages DNS; there is <strong>no cert-manager</strong> in the cluster (the deliverable explicitly forbids it).</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — ArgoCD &amp; HTTPS Ingress</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>no matches for kind "ApplicationSet"</code> on a client dry-run → expected before install; the CRDs ship with the argo-cd Helm chart, so apply only after Step 1</li>
+              <li>Ingress <code>ADDRESS</code> stays empty → ALB Controller didn't reconcile; check its logs and that the public subnets carry the <code>kubernetes.io/role/elb=1</code> tag</li>
+              <li>App stuck <code>OutOfSync</code> / <code>ComparisonError: repository not accessible</code> → repo is private; add repo credentials to ArgoCD (Step 3 note)</li>
+              <li>ArgoCD UI shows <code>ERR_TOO_MANY_REDIRECTS</code> → <code>server.insecure</code> not applied; confirm <span class="resource-path">argocd/values.yaml</span> and that the ALB (not argocd-server) terminates TLS</li>
+              <li><code>404</code> from the ALB on the argocd host → host must sit under <code>*.eks.ayuadomain.com</code> for the wildcard cert and the ExternalDNS-managed zone to match</li>
+              <li>App reports resources <code>already managed by Helm</code> → ArgoCD adopts them; the first sync may flip <code>OutOfSync</code> then converge. Don't run <code>helm upgrade</code> by hand afterward — push to Git instead</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
-          <strong>Verify:</strong> <code>curl -I https://api.cavendish.yourdomain.com</code> returns HTTP 200.
+          <strong>Verify:</strong> <code>curl -I https://api.eks.ayuadomain.com/health</code> returns HTTP 200.
+          ArgoCD UI reachable at <code>https://argocd.eks.ayuadomain.com</code>; <code>cavendish-staging</code> Application is Synced/Healthy.
           ACM certificate shows Issued. No cert-manager in cluster.
         </div>
       </div>
@@ -889,7 +1661,7 @@ curl -I http://api.yourname.mooo.com
           <ol>
             <li>Bootstrap S3 + DynamoDB for remote state</li>
             <li>VPC module — 3 AZs, public/private subnets, NAT</li>
-            <li>EKS cluster v1.29 with managed node group</li>
+            <li>EKS cluster v1.32 with managed node group</li>
             <li>ECR repos, S3 buckets, Route 53, ACM, Secrets Manager</li>
             <li>IRSA roles in irsa.tf — OIDC trust per ServiceAccount</li>
             <li>GitHub Actions OIDC provider for CI/CD</li>

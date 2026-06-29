@@ -28,7 +28,7 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
 }
 
-variable "public_subnet_cids" {
+variable "public_subnet_cidrs" {
   description = "Public subnet CIDR blocks"
   type        = list(string)
   default     = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
@@ -37,7 +37,7 @@ variable "public_subnet_cids" {
 variable "eks_cluster_version" {
   description = "EKS Kubernetes version"
   type        = string
-  default     = "1.29"
+  default     = "1.32"
 }
 
 variable "node_group_min_size" {
@@ -69,6 +69,12 @@ variable "create_route53_zone" {
   description = "Create a new Route 53 hosted zone"
   type        = bool
   default     = true
+}
+
+variable "parent_route53_zone_name" {
+  description = "Name of an existing parent Route 53 hosted zone to delegate this subdomain from (e.g. ayuadomain.com). When set alongside create_route53_zone, an NS record for domain_name is created in the parent zone. Leave empty to skip automatic delegation."
+  type        = string
+  default     = ""
 }
 
 variable "postgres_username" {

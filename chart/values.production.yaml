@@ -1,12 +1,14 @@
 global:
   environment: production
   domain: cavendish.example.com
+  secretsManagerName: cavendish/production/postgres
 
 namespace:
   name: cavendish-production
 
+# Map keys deep-merge onto base values.yaml — only override what differs.
 services:
-  - name: analytics-api
+  analytics-api:
     replicas: 2
     resources:
       requests:
@@ -17,21 +19,17 @@ services:
         memory: 512Mi
     irsa:
       enabled: true
-      roleArn: ""
-
-  - name: dashboard
+      roleArn: ""  # terraform output -raw irsa_analytics_api_role_arn
+  dashboard:
     replicas: 2
-
-  - name: webhook-processor
+  webhook-processor:
     replicas: 2
-    irsa:
-      enabled: true
-      roleArn: ""
 
 postgresql:
   storageSize: 50Gi
   backup:
-    s3Bucket: ""  # cavendish-production-backups-ACCOUNT_ID
+    s3Bucket: ""        # terraform output -raw pg_backups_bucket
+    irsaRoleArn: ""     # terraform output -raw irsa_postgres_backup_role_arn
 
 hpa:
   enabled: true

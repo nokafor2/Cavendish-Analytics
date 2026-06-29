@@ -1,19 +1,21 @@
-{{- range .Values.services }}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .name }}
+  name: {{ $name }}
   namespace: {{ $.Values.namespace.name }}
   labels:
-    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/name: {{ $name }}
     app.kubernetes.io/part-of: cavendish
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ .name }}
+  name: {{ $name }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .name }}
+    name: {{ $name }}
     namespace: {{ $.Values.namespace.name }}
+{{- end }}
 {{- end }}

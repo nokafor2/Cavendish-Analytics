@@ -6,6 +6,10 @@ environment  = "staging"
 project_name = "cavendish"
 domain_name  = "cavendish.example.com"
 
+# Optional — if domain_name is a subdomain of an existing Route 53 zone,
+# set the parent zone name to auto-create the NS delegation record.
+# parent_route53_zone_name = "example.com"
+
 github_org  = "your-github-org"
 github_repo = "cavendish-analytics-eks"
 

@@ -1,0 +1,14 @@
+# One-shot pod to verify IRSA for aws-load-balancer-controller (Tuesday Step 7c).
+# Apply, read logs, then delete.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: irsa-verify
+  namespace: kube-system
+spec:
+  serviceAccountName: aws-load-balancer-controller
+  restartPolicy: Never
+  containers:
+    - name: aws-cli
+      image: public.ecr.aws/aws-cli/aws-cli
+      command: ["aws", "sts", "get-caller-identity"]

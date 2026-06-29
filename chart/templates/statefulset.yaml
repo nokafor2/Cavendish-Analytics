@@ -69,12 +69,15 @@ spec:
           ports:
             - name: metrics
               containerPort: 9187
-          env:
-            - name: DATA_SOURCE_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-credentials
-                  key: datasource
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              export DATA_SOURCE_NAME="host=127.0.0.1 user=${username} password=${password} dbname={{ .Values.postgresql.database }} sslmode=disable"
+              exec /bin/postgres_exporter
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
           resources:
             requests:
               cpu: 50m
