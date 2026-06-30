@@ -1499,10 +1499,16 @@ kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns --tail=20
 # Expected: "CREATE: api.eks.ayuadomain.com" / "argocd.eks.ayuadomain.com" — no AccessDenied
 
 # HTTPS through ALB + ACM (allow ~1-2 min for DNS to propagate)
-curl -I https://api.eks.ayuadomain.com/health
+# FastAPI /health is GET-only unless @app.head is registered — use GET for the API:
+curl -s https://api.eks.ayuadomain.com/health
+# Expected: {"status":"healthy"}
+
 curl -s https://api.eks.ayuadomain.com/api/v1/db/status
+# Expected: {"db_host":"postgres","db_name":"cavendish","connected":true}
+
+# ArgoCD UI (static server — HEAD works with curl -I):
 curl -I https://argocd.eks.ayuadomain.com
-# Expected: HTTP/2 200 on /health; JSON on /db/status; 200 on the ArgoCD UI</pre>
+# Expected: HTTP/1.1 200 (or HTTP/2 200) — ALB may negotiate HTTP/1.1 depending on curl version</pre>
             <p class="exec-note"><strong>What you built:</strong> a self-healing GitOps pipeline. A push to <code>main</code> reconciles the cluster automatically — no manual <code>helm upgrade</code>. TLS is served by the ALB using the ACM wildcard cert, and ExternalDNS manages DNS; there is <strong>no cert-manager</strong> in the cluster (the deliverable explicitly forbids it).</p>
           </div>
 
@@ -1520,7 +1526,7 @@ curl -I https://argocd.eks.ayuadomain.com
         </div>
 
         <div class="verify">
-          <strong>Verify:</strong> <code>curl -I https://api.eks.ayuadomain.com/health</code> returns HTTP 200.
+          <strong>Verify:</strong> <code>curl -s https://api.eks.ayuadomain.com/health</code> returns <code>{"status":"healthy"}</code>.
           ArgoCD UI reachable at <code>https://argocd.eks.ayuadomain.com</code>; <code>cavendish-staging</code> Application is Synced/Healthy.
           ACM certificate shows Issued. No cert-manager in cluster.
         </div>
