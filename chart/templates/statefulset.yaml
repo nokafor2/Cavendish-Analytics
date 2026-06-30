@@ -10,6 +10,14 @@ metadata:
 spec:
   serviceName: postgres
   replicas: 1
+  podManagementPolicy: OrderedReady
+  revisionHistoryLimit: 10
+  updateStrategy:
+    type: RollingUpdate
+  # Never drop the data volume when the StatefulSet is deleted or scaled — this is a database.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app.kubernetes.io/name: postgres
@@ -97,6 +105,7 @@ spec:
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: {{ .Values.postgresql.storageClass }}
+        volumeMode: Filesystem
         resources:
           requests:
             storage: {{ .Values.postgresql.storageSize }}

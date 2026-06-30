@@ -1484,8 +1484,9 @@ git push origin main
 
 kubectl get applications -n argocd
 kubectl get application cavendish-staging -n argocd `
-  -o jsonpath="{.status.sync.status} / {.status.health.status}{'`n'}"
-# Expected: Synced / Healthy  (may show Progressing/OutOfSync briefly on first sync)</pre>
+  -o 'jsonpath={.status.sync.status}{" / "}{.status.health.status}{"\n"}'
+# Expected: Synced / Healthy  (may show Progressing/OutOfSync briefly on first sync)
+# PowerShell: use single quotes around jsonpath — double quotes + {'`n'} break kubectl's parser.</pre>
           </div>
 
           <div class="exec-step">
