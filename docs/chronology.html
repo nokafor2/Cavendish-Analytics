@@ -1541,13 +1541,75 @@ curl -I https://argocd.eks.ayuadomain.com
           <li>Deploy PostgreSQL StatefulSet: <span class="resource-path">chart/templates/statefulset.yaml</span></li>
           <li>EBS PVC via gp3 StorageClass (EBS CSI driver)</li>
           <li>Add postgres-exporter sidecar for database metrics</li>
-          <li>Apply ServiceAccount + Role + RoleBinding per service</li>
+          <li>Apply ServiceAccount + Role + RoleBinding per service (least privilege)</li>
           <li>Enforce Pod Security Standards (restricted) on namespaces</li>
           <li>Verify no Pod uses default ServiceAccount</li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Friday</h3>
+          <p class="exec-note">The chart already carries the StatefulSet, RBAC, ServiceAccounts and the restricted-PSS namespace — they were applied when ArgoCD synced on Thursday. Friday is therefore a <strong>hardening + verification</strong> day: prove least-privilege RBAC, confirm no Pod falls back to the <code>default</code> ServiceAccount, and prove the admission controller rejects an unsafe Pod. All deploys still flow through Git → ArgoCD; nothing is applied to the cluster by hand except the negative PSS test (which is meant to be rejected).</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 1 — Tighten the postgres ServiceAccount (least privilege)</div>
+            <p class="exec-note">The <code>postgres</code> Pod needs no AWS access, so its ServiceAccount drops the IRSA annotation — only <code>pg-backup</code> assumes the backup role to write dumps to S3. Commit + push; ArgoCD reconciles.</p>
+            <pre class="code-block">git add chart/templates/serviceaccount.yaml
+git commit -m "fix(rbac): drop IRSA role from postgres SA (least privilege)"
+git push origin main
+
+# Force ArgoCD to re-read Git, then confirm Synced/Healthy:
+kubectl annotate application cavendish-staging -n argocd argocd.argoproj.io/refresh=normal --overwrite
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}"
+# Expected: Synced / Healthy</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 2 — Verify the PostgreSQL StatefulSet + EBS PVC</div>
+            <pre class="code-block">kubectl get statefulset postgres -n cavendish-staging `
+  -o custom-columns="NAME:.metadata.name,READY:.status.readyReplicas,SVCACCT:.spec.template.spec.serviceAccountName"
+# Expected: postgres  1  postgres
+
+kubectl get pvc -n cavendish-staging
+# Expected: postgres-data-postgres-0  Bound  10Gi  RWO  gp3
+
+# postgres pod is 2/2 (postgres + postgres-exporter sidecar):
+kubectl get pod postgres-0 -n cavendish-staging -o jsonpath="{range .spec.containers[*]}{.name}{'`n'}{end}"
+# Expected: postgres / postgres-exporter</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 3 — Verify RBAC + that no Pod uses the default ServiceAccount</div>
+            <pre class="code-block">kubectl get serviceaccount,role,rolebinding -n cavendish-staging
+
+# Every workload Pod must run under a named SA, never "default":
+kubectl get pods -n cavendish-staging `
+  -o custom-columns="POD:.metadata.name,SA:.spec.serviceAccountName"
+# Expected: analytics-api -> analytics-api, postgres-0 -> postgres (none = default)
+
+# Confirm the postgres SA no longer carries an AWS role; pg-backup still does:
+kubectl get sa postgres   -n cavendish-staging -o jsonpath="{.metadata.annotations}"
+kubectl get sa pg-backup  -n cavendish-staging -o jsonpath="{.metadata.annotations}"
+# Expected: postgres -> no eks.amazonaws.com/role-arn; pg-backup -> backup role ARN</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week1);">Step 4 — Prove Pod Security Standards (restricted) is enforcing</div>
+            <p class="exec-note"><span class="resource-path">docs/manifests/privileged-pod-test.yaml</span> requests privileged + host namespaces + root. The PSS admission controller must reject it. This is the only manual <code>kubectl apply</code> of the day — it is expected to fail.</p>
+            <pre class="code-block">kubectl get namespace cavendish-staging `
+  -o jsonpath="enforce={.metadata.labels['pod-security\.kubernetes\.io/enforce']}{'`n'}"
+# Expected: enforce=restricted
+
+kubectl apply -f docs/manifests/privileged-pod-test.yaml
+# Expected: Error from server (Forbidden): ... violates PodSecurity "restricted:latest":
+#   privileged, hostNetwork/hostPID, runAsNonRoot != true, allowPrivilegeEscalation != false,
+#   unrestricted capabilities, seccompProfile — the Pod is REJECTED (admission denied).</pre>
+            <p class="exec-note"><strong>What you built:</strong> a least-privilege, defense-in-depth data tier. Postgres runs as a non-root StatefulSet on a retained gp3 EBS volume with its own ServiceAccount and no cloud credentials; backups run under a separate IRSA-scoped <code>pg-backup</code> identity; and the namespace's restricted Pod Security Standard blocks privileged workloads at admission time (D14 prep) — directly addressing the Q2/Q4 over-privileged-workload findings.</p>
+          </div>
+        </div>
+
         <div class="verify">
-          <strong>Verify:</strong> <code>kubectl get pods -o jsonpath</code> — no serviceAccountName: default.
-          Privileged Pod deployment rejected by admission controller (D14 prep).
+          <strong>Verify:</strong> <code>kubectl get pods -o custom-columns=...:.spec.serviceAccountName</code> — no <code>default</code> ServiceAccount in use.
+          Privileged Pod deployment rejected by the PSS admission controller (D14 prep). Postgres StatefulSet Ready 1/1 on a Bound gp3 PVC.
         </div>
       </div>
     </div>
