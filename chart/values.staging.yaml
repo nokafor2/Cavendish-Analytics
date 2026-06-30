@@ -6,10 +6,8 @@ global:
   # Only the DB password is a secret, and that lives in AWS Secrets Manager.
   imageRegistry: 791778419317.dkr.ecr.eu-west-2.amazonaws.com/cavendish
   acmCertificateArn: arn:aws:acm:eu-west-2:791778419317:certificate/c2ebbad1-e580-466c-be4d-747fe60a9059
-
 namespace:
   name: cavendish-staging
-
 # Map keys deep-merge onto base values.yaml — only override what differs.
 services:
   analytics-api:
@@ -17,16 +15,15 @@ services:
     irsa:
       enabled: true
       roleArn: arn:aws:iam::791778419317:role/cavendish-analytics-api-staging
-
+    image:
+      tag: 7bf14a1d4a1b568e595c427af78f9e5cffbc0c1b
 postgresql:
   storageSize: 10Gi
   backup:
     s3Bucket: cavendish-staging-backups-791778419317
     irsaRoleArn: arn:aws:iam::791778419317:role/cavendish-postgres-backup-staging
-
 hpa:
   enabled: false
-
 monitoring:
   prometheusRule:
     enabled: false
