@@ -25,8 +25,12 @@ metadata:
     app.kubernetes.io/part-of: cavendish
 spec:
   podSelector:
-    matchLabels:
-      app.kubernetes.io/part-of: cavendish
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - analytics-api
+          - dashboard
   policyTypes:
     - Ingress
   ingress:
@@ -40,6 +44,30 @@ spec:
           port: 3000
         - protocol: TCP
           port: 8080
+---
+# ALB health checks and client responses require egress back into the VPC.
+# Ingress-only rules are not enough — pods must be able to SEND replies to the ALB.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-vpc
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - analytics-api
+          - dashboard
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.vpcCidr | quote }}
 ---
 # Allow webhook-processor → analytics-api (D7 positive-path test).
 apiVersion: networking.k8s.io/v1

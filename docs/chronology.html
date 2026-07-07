@@ -1661,7 +1661,13 @@ aws eks describe-addon --cluster-name cavendish-staging --addon-name metrics-ser
 # Expected: ACTIVE for both
 
 kubectl get pods -n kube-system -l app.kubernetes.io/name=metrics-server
-# Expected: metrics-server pod(s) Running</pre>
+# Expected: metrics-server pod(s) Running (hostNetwork uses node IPs)
+
+# HPA needs the Metrics API — must NOT show &lt;unknown&gt;:
+kubectl top pods -n cavendish-staging
+kubectl get hpa analytics-api -n cavendish-staging
+# Expected: TARGETS like cpu: 5%/70%  (not cpu: &lt;unknown&gt;/70%)</pre>
+            <p class="exec-note"><strong>metrics-server fix:</strong> Terraform enables <code>hostNetwork</code> on the add-on and opens node SG port <strong>10251</strong> from the cluster SG. Without both, HPA shows <code>cpu: &lt;unknown&gt;/70%</code> and never scales. If you applied Terraform before this fix, run <code>terraform apply</code> again from <span class="resource-path">terraform/</span>.</p>
           </div>
 
           <div class="exec-step">
@@ -1707,12 +1713,20 @@ kubectl delete -f docs/manifests/netpol-test-pods.yaml</pre>
 
           <div class="exec-step">
             <div class="exec-step-title" style="color: var(--week2);">Step 4 — HPA load test with k6 (D6)</div>
-            <p class="exec-note">Install k6 if needed: <code>winget install k6</code> (Windows) or <a href="https://k6.io/docs/get-started/installation/">k6.io</a>. The script in <span class="resource-path">loadtest/k6-hpa.js</span> hammers the CPU-intensive <code>/api/v1/analytics/compute</code> endpoint.</p>
+            <p class="exec-note">Install k6 if needed (Windows): <code>winget install GrafanaLabs.k6</code>, then <strong>close and reopen PowerShell</strong> so <code>PATH</code> updates. If <code>k6</code> is still not found, use the full path: <code>&amp; "C:\Program Files\k6\k6.exe" run ...</code>. Linux/macOS: <a href="https://k6.io/docs/get-started/installation/">k6.io</a>. The script in <span class="resource-path">loadtest/k6-hpa.js</span> hammers the CPU-intensive <code>/api/v1/analytics/compute</code> endpoint.</p>
             <pre class="code-block"># Terminal 1 — watch HPA scale (Ctrl+C to stop watching):
 kubectl get hpa analytics-api -n cavendish-staging -w
 
 # Terminal 2 — run the load test (replace URL if your domain differs):
+# Option A — after reopening PowerShell post-winget:
 k6 run -e API_URL=https://api.eks.ayuadomain.com loadtest/k6-hpa.js
+
+# Option B — same session without reopening terminal (refresh PATH):
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+k6 run -e API_URL=https://api.eks.ayuadomain.com loadtest/k6-hpa.js
+
+# Option C — full path if k6 still not on PATH:
+&amp; "C:\Program Files\k6\k6.exe" run -e API_URL=https://api.eks.ayuadomain.com loadtest/k6-hpa.js
 
 # Snapshot at peak load:
 kubectl get hpa analytics-api -n cavendish-staging
@@ -1729,7 +1743,7 @@ kubectl get deploy analytics-api -n cavendish-staging
               <li>Policies exist but traffic still flows everywhere → <code>enableNetworkPolicy</code> not active on vpc-cni; re-check Step 1 (<code>aws eks describe-addon</code>)</li>
               <li><code>curl https://api.../health</code> fails after enabling NP → <code>networkPolicy.vpcCidr</code> wrong; must match Terraform <code>vpc_cidr</code> (default <code>10.0.0.0/16</code>)</li>
               <li><code>analytics-api</code> can't reach postgres → confirm <code>allow-egress-to-postgres</code> and <code>allow-api-to-postgres</code> NetworkPolicies exist</li>
-              <li>HPA shows <code>&lt;unknown&gt;</code> CPU → metrics-server not Running; check Step 1</li>
+              <li>HPA shows <code>cpu: &lt;unknown&gt;/70%</code> → Metrics API broken. Check <code>kubectl top pods</code> (must work). Fix: <code>terraform apply</code> (hostNetwork + SG port 10251 on metrics-server); verify <code>kubectl get apiservice v1beta1.metrics.k8s.io</code> shows <code>Available=True</code></li>
               <li>HPA stays at 2 replicas → CPU requests too low relative to load; raise <code>intensity</code> in k6 or lower <code>targetCPUUtilization</code> temporarily</li>
               <li>Webhook test returns 000 / curl exit 28 → missing <strong>egress</strong> rule on webhook Pod (needs <code>allow-webhook-egress-to-api</code>, not just ingress on analytics-api); confirm policy exists after ArgoCD sync</li>
               <li>Webhook test returns 000 → Pod not Ready yet; wait for <code>netpol-test-webhook</code> Ready before curling</li>

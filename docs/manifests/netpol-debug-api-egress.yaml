@@ -1,0 +1,14 @@
+# Temporary diagnostic — allow all egress from analytics-api (remove after ALB fix verified).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-egress-all
+  namespace: cavendish-staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-api
+  policyTypes:
+    - Egress
+  egress:
+    - {}

@@ -15,6 +15,7 @@ metadata:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/certificate-arn: {{ $.Values.global.acmCertificateArn | quote }}
+    alb.ingress.kubernetes.io/healthcheck-path: {{ $svc.ingress.healthcheckPath | default "/health" | quote }}
     external-dns.alpha.kubernetes.io/hostname: {{ $svc.ingress.host }}.{{ $.Values.global.domain }}
     external-dns.alpha.kubernetes.io/ttl: "300"
 spec:

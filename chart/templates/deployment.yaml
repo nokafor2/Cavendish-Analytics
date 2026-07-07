@@ -21,6 +21,7 @@ spec:
       labels:
         app.kubernetes.io/name: {{ $name }}
         app.kubernetes.io/component: {{ $svc.component }}
+        app.kubernetes.io/part-of: cavendish
       annotations:
         prometheus.io/scrape: "{{ $svc.serviceMonitor.enabled }}"
         prometheus.io/path: {{ $svc.serviceMonitor.path | default "/metrics" }}

@@ -89,6 +89,18 @@ module "eks" {
 
   cluster_endpoint_public_access = true
 
+  # metrics-server listens on 10251; the control plane must reach node/pod on this port.
+  node_security_group_additional_rules = {
+    ingress_cluster_to_metrics_server = {
+      description                   = "Cluster API to metrics-server (port 10251)"
+      protocol                      = "tcp"
+      from_port                     = 10251
+      to_port                       = 10251
+      type                          = "ingress"
+      source_cluster_security_group = true
+    }
+  }
+
   eks_managed_node_groups = {
     general = {
       min_size     = var.node_group_min_size
@@ -115,7 +127,16 @@ module "eks" {
       })
     }
     # HPA needs metrics-server to read Pod CPU utilisation (Week 2 D6).
-    metrics-server = { most_recent = true }
+    metrics-server = {
+      most_recent                = true
+      resolve_conflicts_on_create = "OVERWRITE"
+      resolve_conflicts_on_update = "OVERWRITE"
+      configuration_values = jsonencode({
+        hostNetwork = {
+          enabled = true
+        }
+      })
+    }
     # aws-ebs-csi-driver + snapshot-controller → ebs-csi.tf (needs IRSA role first)
   }
 }
