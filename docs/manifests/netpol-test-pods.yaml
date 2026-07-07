@@ -1,0 +1,56 @@
+# NetworkPolicy verification Pods (Week 2 Monday — D7).
+# Apply into cavendish-staging, run the curl tests in chronology Step 4, then delete.
+#
+# Expected:
+#   netpol-test-dashboard  -> analytics-api:8000  REFUSED (no allow rule)
+#   netpol-test-webhook    -> analytics-api:8000  200 OK
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netpol-test-dashboard
+  namespace: cavendish-staging
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/part-of: cavendish
+    test: netpol-negative
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: curlimages/curl:8.5.0
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netpol-test-webhook
+  namespace: cavendish-staging
+  labels:
+    app.kubernetes.io/name: webhook-processor
+    app.kubernetes.io/part-of: cavendish
+    test: netpol-positive
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: curlimages/curl:8.5.0
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

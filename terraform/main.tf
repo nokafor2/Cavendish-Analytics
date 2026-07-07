@@ -107,7 +107,15 @@ module "eks" {
   cluster_addons = {
     coredns    = { most_recent = true }
     kube-proxy = { most_recent = true }
-    vpc-cni    = { most_recent = true }
+    vpc-cni = {
+      most_recent = true
+      # Required for Kubernetes NetworkPolicy resources to be enforced (Week 2 D7).
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+      })
+    }
+    # HPA needs metrics-server to read Pod CPU utilisation (Week 2 D6).
+    metrics-server = { most_recent = true }
     # aws-ebs-csi-driver + snapshot-controller → ebs-csi.tf (needs IRSA role first)
   }
 }

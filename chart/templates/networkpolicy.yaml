@@ -1,23 +1,28 @@
 {{- if .Values.networkPolicy.enabled }}
 ---
-# Default deny all ingress and egress
+# Default deny all ingress and egress for every Pod in the namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-all
   namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
     - Egress
 ---
-# Allow ingress from ALB to services with ingress enabled
+# ALB (target-type: ip) sends traffic from VPC ENIs — not from kube-system Pods.
+# Allow inbound HTTP from the VPC CIDR to API / dashboard ports only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-alb-ingress
   namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
 spec:
   podSelector:
     matchLabels:
@@ -26,9 +31,8 @@ spec:
     - Ingress
   ingress:
     - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.vpcCidr | quote }}
       ports:
         - protocol: TCP
           port: 8000
@@ -37,33 +41,14 @@ spec:
         - protocol: TCP
           port: 8080
 ---
-# Allow dashboard → analytics-api
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-dashboard-to-api
-  namespace: {{ .Values.namespace.name }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: analytics-api
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: dashboard
-      ports:
-        - protocol: TCP
-          port: 8000
----
-# Allow webhook-processor → analytics-api
+# Allow webhook-processor → analytics-api (D7 positive-path test).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-webhook-to-api
   namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
 spec:
   podSelector:
     matchLabels:
@@ -79,12 +64,14 @@ spec:
         - protocol: TCP
           port: 8000
 ---
-# Allow analytics-api → postgres (explicit DB path only)
+# Allow analytics-api + webhook-processor → postgres on 5432 only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-api-to-postgres
   namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
 spec:
   podSelector:
     matchLabels:
@@ -99,16 +86,68 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: webhook-processor
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pg-backup
       ports:
         - protocol: TCP
           port: 5432
 ---
-# Allow DNS egress for all pods
+# Egress to postgres for workloads that query the database or run pg_dump.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-postgres
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - analytics-api
+          - webhook-processor
+          - pg-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# pg-backup CronJob uploads dumps to S3 over HTTPS (via NAT gateway).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-egress-https
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pg-backup
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# DNS egress for all Pods (kube-dns / CoreDNS in kube-system).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-dns-egress
   namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
 spec:
   podSelector: {}
   policyTypes:

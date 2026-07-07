@@ -1573,8 +1573,16 @@ kubectl get pvc -n cavendish-staging
 # Expected: postgres-data-postgres-0  Bound  10Gi  RWO  gp3
 
 # postgres pod is 2/2 (postgres + postgres-exporter sidecar):
-kubectl get pod postgres-0 -n cavendish-staging -o jsonpath="{range .spec.containers[*]}{.name}{'`n'}{end}"
-# Expected: postgres / postgres-exporter</pre>
+kubectl get pod postgres-0 -n cavendish-staging
+# Expected: READY 2/2
+
+# List container names (shell-safe — no newlines inside jsonpath):
+kubectl get pod postgres-0 -n cavendish-staging -o custom-columns="POD:.metadata.name,CONTAINERS:.spec.containers[*].name"
+# Expected: postgres-0  postgres,postgres-exporter
+
+# One-line alternative (space-separated names):
+kubectl get pod postgres-0 -n cavendish-staging -o jsonpath="{.spec.containers[*].name}"
+# Expected: postgres postgres-exporter</pre>
           </div>
 
           <div class="exec-step">
@@ -1595,9 +1603,8 @@ kubectl get sa pg-backup  -n cavendish-staging -o jsonpath="{.metadata.annotatio
           <div class="exec-step">
             <div class="exec-step-title" style="color: var(--week1);">Step 4 — Prove Pod Security Standards (restricted) is enforcing</div>
             <p class="exec-note"><span class="resource-path">docs/manifests/privileged-pod-test.yaml</span> requests privileged + host namespaces + root. The PSS admission controller must reject it. This is the only manual <code>kubectl apply</code> of the day — it is expected to fail.</p>
-            <pre class="code-block">kubectl get namespace cavendish-staging `
-  -o jsonpath="enforce={.metadata.labels['pod-security\.kubernetes\.io/enforce']}{'`n'}"
-# Expected: enforce=restricted
+            <pre class="code-block">kubectl get namespace cavendish-staging --show-labels
+# Expected: pod-security.kubernetes.io/enforce=restricted (also audit + warn)
 
 kubectl apply -f docs/manifests/privileged-pod-test.yaml
 # Expected: Error from server (Forbidden): ... violates PodSecurity "restricted:latest":
@@ -1627,16 +1634,111 @@ kubectl apply -f docs/manifests/privileged-pod-test.yaml
           <span class="deliverable-tag">D6, D7</span>
         </div>
         <ul>
-          <li>Apply default-deny NetworkPolicy: <span class="resource-path">chart/templates/networkpolicy.yaml</span></li>
-          <li>Add explicit allow rules: dashboard→api, webhook→api, api→postgres, DNS egress</li>
-          <li>Enable HPA in values.production.yaml (min 2, max 10, CPU 70%)</li>
-          <li>Run k6 load test against /api/v1/analytics/compute</li>
-          <li>Watch HPA scale: <code>kubectl get hpa -w</code></li>
-          <li>Commit output to <span class="resource-path">docs/hpa-load-test.md</span></li>
+          <li>Enable VPC CNI NetworkPolicy enforcement + metrics-server (Terraform)</li>
+          <li>Harden NetworkPolicies: default-deny, ALB from VPC CIDR, webhook→api, api→postgres, DNS + egress</li>
+          <li>Enable HPA on staging (production already has it in <span class="resource-path">values.production.yaml</span>)</li>
+          <li>Prove segmentation with test Pods: dashboard→api refused, webhook→api 200</li>
+          <li>Run k6 load test against <code>/api/v1/analytics/compute</code></li>
+          <li>Record results in <span class="resource-path">docs/hpa-load-test.md</span></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Week 2 Monday</h3>
+          <p class="exec-note">Prerequisites: Week 1 complete (ArgoCD Synced/Healthy, HTTPS working). NetworkPolicy resources existed in the chart but were <strong>not enforced</strong> until the VPC CNI add-on enables <code>enableNetworkPolicy</code>. HPA needs the <code>metrics-server</code> add-on to read Pod CPU.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 1 — Enable NetworkPolicy enforcement + metrics-server (Terraform)</div>
+            <p class="exec-note"><span class="resource-path">terraform/main.tf</span> now sets <code>enableNetworkPolicy = true</code> on the <code>vpc-cni</code> add-on and installs <code>metrics-server</code>. This is a one-time cluster change.</p>
+            <pre class="code-block">cd terraform
+terraform plan   # expect: vpc-cni configuration update + metrics-server create
+terraform apply
+
+# Wait until both add-ons are ACTIVE (can take 3-5 min):
+aws eks describe-addon --cluster-name cavendish-staging --addon-name vpc-cni `
+  --query "addon.status" --output text
+aws eks describe-addon --cluster-name cavendish-staging --addon-name metrics-server `
+  --query "addon.status" --output text
+# Expected: ACTIVE for both
+
+kubectl get pods -n kube-system -l app.kubernetes.io/name=metrics-server
+# Expected: metrics-server pod(s) Running</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 2 — Push hardened NetworkPolicies + enable HPA (Git → ArgoCD)</div>
+            <p class="exec-note">Changes in Git: <span class="resource-path">chart/templates/networkpolicy.yaml</span> (ALB ingress from VPC CIDR, egress to postgres/S3, dashboard pod-to-pod <strong>not</strong> allowed), <span class="resource-path">chart/values.staging.yaml</span> (<code>hpa.enabled: true</code>). Commit + push; ArgoCD syncs.</p>
+            <pre class="code-block">git add chart/ terraform/main.tf loadtest/ docs/
+git commit -m "Week 2 Mon: NetworkPolicy hardening + HPA on staging + metrics-server"
+git push origin main
+
+kubectl annotate application cavendish-staging -n argocd argocd.argoproj.io/refresh=normal --overwrite
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}"
+# Expected: Synced / Healthy
+
+kubectl get networkpolicy -n cavendish-staging
+# Expected: default-deny-all, allow-alb-ingress, allow-webhook-to-api,
+#           allow-api-to-postgres, allow-egress-to-postgres, allow-backup-egress-https, allow-dns-egress
+
+kubectl get hpa -n cavendish-staging
+# Expected: analytics-api  min=2 max=10  CPU 70%</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 3 — Prove NetworkPolicy segmentation (D7)</div>
+            <p class="exec-note"><span class="resource-path">docs/manifests/netpol-test-pods.yaml</span> deploys two curl Pods: one labelled <code>dashboard</code> (must be blocked) and one labelled <code>webhook-processor</code> (must succeed). Dashboard reaches the API only via the public ALB, not pod-to-pod.</p>
+            <pre class="code-block">kubectl apply -f docs/manifests/netpol-test-pods.yaml
+kubectl wait --for=condition=Ready pod/netpol-test-dashboard -n cavendish-staging --timeout=120s
+kubectl wait --for=condition=Ready pod/netpol-test-webhook   -n cavendish-staging --timeout=120s
+
+# Negative path — dashboard pod-to-pod must FAIL (timeout / connection refused):
+kubectl exec -n cavendish-staging netpol-test-dashboard -- `
+  curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://analytics-api:8000/health
+# Expected: 000  (no route — NetworkPolicy blocks it)
+
+# Positive path — webhook pod-to-pod must succeed:
+kubectl exec -n cavendish-staging netpol-test-webhook -- `
+  curl -s -o /dev/null -w "%{http_code}" http://analytics-api:8000/health
+# Expected: 200
+
+# Cleanup test pods when done:
+kubectl delete -f docs/manifests/netpol-test-pods.yaml</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 4 — HPA load test with k6 (D6)</div>
+            <p class="exec-note">Install k6 if needed: <code>winget install k6</code> (Windows) or <a href="https://k6.io/docs/get-started/installation/">k6.io</a>. The script in <span class="resource-path">loadtest/k6-hpa.js</span> hammers the CPU-intensive <code>/api/v1/analytics/compute</code> endpoint.</p>
+            <pre class="code-block"># Terminal 1 — watch HPA scale (Ctrl+C to stop watching):
+kubectl get hpa analytics-api -n cavendish-staging -w
+
+# Terminal 2 — run the load test (replace URL if your domain differs):
+k6 run -e API_URL=https://api.eks.ayuadomain.com loadtest/k6-hpa.js
+
+# Snapshot at peak load:
+kubectl get hpa analytics-api -n cavendish-staging
+kubectl get deploy analytics-api -n cavendish-staging
+# Expected: replicas scale from 2 to >= 5 under sustained load, then scale back after k6 ends
+
+# Record results in docs/hpa-load-test.md (table + k6 summary + describe output)</pre>
+            <p class="exec-note"><strong>What you built:</strong> zero-trust pod networking (default-deny with explicit allow paths) and CPU-based autoscaling. Only <code>webhook-processor</code> may call <code>analytics-api</code> directly; <code>dashboard</code> must use the ALB ingress path. HPA scales the API tier under compute load — addressing the Q1 traffic-spike incident without manual intervention.</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — NetworkPolicy &amp; HPA</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Policies exist but traffic still flows everywhere → <code>enableNetworkPolicy</code> not active on vpc-cni; re-check Step 1 (<code>aws eks describe-addon</code>)</li>
+              <li><code>curl https://api.../health</code> fails after enabling NP → <code>networkPolicy.vpcCidr</code> wrong; must match Terraform <code>vpc_cidr</code> (default <code>10.0.0.0/16</code>)</li>
+              <li><code>analytics-api</code> can't reach postgres → confirm <code>allow-egress-to-postgres</code> and <code>allow-api-to-postgres</code> NetworkPolicies exist</li>
+              <li>HPA shows <code>&lt;unknown&gt;</code> CPU → metrics-server not Running; check Step 1</li>
+              <li>HPA stays at 2 replicas → CPU requests too low relative to load; raise <code>intensity</code> in k6 or lower <code>targetCPUUtilization</code> temporarily</li>
+              <li>Webhook test returns 000 → Pod not Ready yet; wait for <code>netpol-test-webhook</code> Ready before curling</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
-          <strong>Verify:</strong> Dashboard Pod → curl analytics-api: refused. Webhook Pod → curl analytics-api: 200.
-          HPA scales from 2 to ≥5 replicas under load.
+          <strong>Verify:</strong> Dashboard test Pod → <code>curl analytics-api:8000</code> blocked (000/timeout).
+          Webhook test Pod → <code>curl analytics-api:8000</code> returns 200.
+          HPA scales from 2 to ≥5 replicas under k6 load. Results committed in <span class="resource-path">docs/hpa-load-test.md</span>.
         </div>
       </div>
 

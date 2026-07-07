@@ -23,7 +23,13 @@ postgresql:
     s3Bucket: cavendish-staging-backups-791778419317
     irsaRoleArn: arn:aws:iam::791778419317:role/cavendish-postgres-backup-staging
 hpa:
-  enabled: false
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+
+networkPolicy:
+  vpcCidr: 10.0.0.0/16
 monitoring:
   prometheusRule:
     enabled: false

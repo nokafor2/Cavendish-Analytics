@@ -138,6 +138,7 @@ hpa:
 
 networkPolicy:
   enabled: true
+  vpcCidr: "10.0.0.0/16"   # VPC where ALB ENIs live (terraform var vpc_cidr)
 
 monitoring:
   serviceMonitors:
