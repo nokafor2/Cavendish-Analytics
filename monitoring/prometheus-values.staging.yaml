@@ -1,0 +1,55 @@
+# Staging overlay for 2× t3.medium nodes (17 pods/node ENI limit).
+# Use WITH the base file:
+#   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring -f monitoring/prometheus-values.yaml \
+#     -f monitoring/prometheus-values.staging.yaml \
+#     --set grafana.adminPassword='...'
+
+# node-exporter DaemonSet needs 1 pod per node — skip on small staging clusters.
+# CPU panel uses container_cpu_usage_seconds_total from kubelet/cAdvisor (built into the stack).
+nodeExporter:
+  enabled: false
+
+# Alertmanager is installed on Wednesday (D10). Disable here to save a pod slot on staging.
+alertmanager:
+  enabled: false
+
+# Fewer bundled dashboards → lighter Grafana pod.
+grafana:
+  defaultDashboardsEnabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+kubeStateMetrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+prometheus:
+  prometheusSpec:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

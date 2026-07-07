@@ -38,6 +38,8 @@ hpa:
   targetCPUUtilization: 70
 
 monitoring:
+  serviceMonitors:
+    enabled: true
   prometheusRule:
     enabled: true
     apiErrorRateThreshold: 0.05

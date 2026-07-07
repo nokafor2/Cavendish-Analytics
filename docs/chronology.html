@@ -1770,6 +1770,130 @@ kubectl get deploy analytics-api -n cavendish-staging
           <li>Import Grafana dashboard: <span class="resource-path">monitoring/grafana-dashboard.json</span></li>
           <li>Verify four panels: request rate, CPU, HPA replicas, PostgreSQL active connections</li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Week 2 Tuesday</h3>
+          <p class="exec-note">Prerequisites: Monday complete (NetworkPolicy enforced, HPA load test recorded). <code>ServiceMonitor</code> CRDs come from <strong>kube-prometheus-stack</strong> — enable them in Git only <em>after</em> Step 1 installs the stack. Prometheus scrapes cross-namespace; <span class="resource-path">chart/templates/networkpolicy.yaml</span> adds <code>allow-prometheus-scrape</code> so metrics are not blocked by default-deny.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 1 — Install kube-prometheus-stack (Helm)</div>
+            <p class="exec-note">Installs Prometheus, Grafana, and kube-state-metrics into <code>monitoring</code>. On <strong>2× t3.medium</strong> nodes (~17 pods/node), use <span class="resource-path">monitoring/prometheus-values.staging.yaml</span> (disables node-exporter + alertmanager) and free 2 pod slots <em>before</em> install (sub-step below). Alertmanager is added on Wednesday (D10).</p>
+            <pre class="code-block">helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# --- Sub-step A: free pod slots on 2× t3.medium (skip if node group has 3+ nodes) ---
+# Each t3.medium allows ~17 pods/node. Check counts:
+kubectl get pods -A -o wide | findstr /R "Running"
+# If nodes are full, scale these staging-safe deployments to 1 replica:
+kubectl scale deployment metrics-server -n kube-system --replicas=1
+kubectl scale deployment coredns -n kube-system --replicas=1
+kubectl scale deployment snapshot-controller -n kube-system --replicas=1
+# Alternative: add a 3rd node (terraform node_group_desired_size=3, or cluster-autoscaler)
+
+# --- Sub-step B: install lean staging stack ---
+$GRAFANA_ADMIN_PASSWORD = "ChangeMe-StrongPassword123!"
+
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack `
+  -n monitoring --create-namespace `
+  -f monitoring/prometheus-values.yaml `
+  -f monitoring/prometheus-values.staging.yaml `
+  --set grafana.adminPassword=$GRAFANA_ADMIN_PASSWORD `
+  --wait --timeout 15m
+
+kubectl get pods -n monitoring
+# Expected: grafana, operator, kube-state-metrics, prometheus-0 Running
+# (no node-exporter DaemonSet on staging; alertmanager added Wednesday)
+
+kubectl get crd servicemonitors.monitoring.coreos.com prometheuses.monitoring.coreos.com
+# Expected: CRDs exist</pre>
+            <p class="exec-note"><strong>Timing:</strong> first install can take 5–10 minutes while images pull. If pods stay <code>Pending</code> with <code>Too many pods</code>, see Troubleshooting below.</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 2 — Enable ServiceMonitors + Prometheus scrape NetworkPolicy (Git → ArgoCD)</div>
+            <p class="exec-note">Changes: <span class="resource-path">chart/values.staging.yaml</span> sets <code>monitoring.serviceMonitors.enabled: true</code>. Chart renders <span class="resource-path">chart/templates/servicemonitor.yaml</span> (analytics-api + postgres-exporter) and <code>allow-prometheus-scrape</code> NetworkPolicy.</p>
+            <pre class="code-block">git add chart/ monitoring/
+git commit -m "Week 2 Tue: enable ServiceMonitors + observability stack"
+git push origin main
+
+kubectl annotate application cavendish-staging -n argocd argocd.argoproj.io/refresh=normal --overwrite
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}"
+# Expected: Synced / Healthy
+
+kubectl get servicemonitor -n cavendish-staging
+# Expected: analytics-api, postgres-exporter
+
+kubectl get networkpolicy allow-prometheus-scrape -n cavendish-staging
+# Expected: policy exists</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 3 — Confirm Prometheus targets UP (D8)</div>
+            <p class="exec-note">Prometheus should scrape <code>analytics-api</code> (<code>/metrics</code>) and <code>postgres-exporter</code> (port 9187). The postgres job exposes <code>pg_stat_activity_count</code> for the Cavendish database.</p>
+            <pre class="code-block"># Port-forward Prometheus UI (leave running in this terminal):
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+
+# In a second terminal — query metrics (wait 1-2 min after Step 2 for first scrape):
+curl -s "http://localhost:9090/api/v1/query?query=up{namespace=\"cavendish-staging\"}" | jq ".data.result[].metric"
+# Expected: jobs for analytics-api and postgres (up=1)
+
+curl -s "http://localhost:9090/api/v1/query?query=pg_stat_activity_count{namespace=\"cavendish-staging\"}" | jq ".data.result"
+# Expected: at least one series with datname="cavendish"
+
+# Or open http://localhost:9090/targets — cavendish-staging endpoints should be UP</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 4 — Import Grafana dashboard + HTTPS ingress (D9)</div>
+            <p class="exec-note">The Grafana sidecar auto-loads ConfigMaps labelled <code>grafana_dashboard: "1"</code>. <span class="resource-path">monitoring/grafana-dashboard-configmap.yaml</span> provides the four required panels. <span class="resource-path">monitoring/grafana-ingress.yaml</span> exposes Grafana at <code>https://grafana.eks.ayuadomain.com</code>.</p>
+            <pre class="code-block">kubectl apply -f monitoring/grafana-dashboard-configmap.yaml
+kubectl apply -f monitoring/grafana-ingress.yaml
+
+# Wait for ALB + DNS (1-3 min):
+kubectl get ingress grafana -n monitoring
+# Expected: ADDRESS populated
+
+curl -s -o NUL -w "grafana: %{http_code}\n" https://grafana.eks.ayuadomain.com/api/health
+# Expected: grafana: 200
+
+# Login: admin / (password from Step 1 --set grafana.adminPassword)
+# Dashboard: Cavendish folder → "Cavendish Analytics Platform"
+
+# Optional — port-forward if ingress not ready yet:
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+# Open http://localhost:3000</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 5 — Verify all four Grafana panels</div>
+            <p class="exec-note">Generate light traffic so request-rate and CPU panels show data. HPA panel needs kube-state-metrics (installed with the stack). DB panel needs postgres-exporter scraping.</p>
+            <pre class="code-block"># Generate API traffic for the request-rate panel:
+for ($i=0; $i -lt 30; $i++) { curl -s -o NUL https://api.eks.ayuadomain.com/health; Start-Sleep -Milliseconds 200 }
+
+# In Grafana → Cavendish Analytics Platform, confirm:
+#   1. API Request Rate        — non-zero after curls above
+#   2. Analytics API CPU Usage — per-pod CPU lines
+#   3. HPA Replica Count       — current/desired replicas (2+)
+#   4. PostgreSQL Active Connections — pg_stat_activity_count for cavendish DB
+
+# Export dashboard JSON (D9 evidence):
+# Grafana UI → Dashboard settings → JSON → copy/save to monitoring/grafana-dashboard.json</pre>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — Observability</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Prometheus targets DOWN for cavendish → missing <code>allow-prometheus-scrape</code> NetworkPolicy; confirm ArgoCD synced Step 2 changes</li>
+              <li>Helm timeout / pods <code>Pending: Too many pods</code> → t3.medium cap is ~17 pods/node; run Step 1 sub-step A, use <code>prometheus-values.staging.yaml</code>, or scale node group to 3+. If core pods are Running but Helm reports failed on <code>admission-create</code> hook, re-run with <code>--no-hooks</code></li>
+              <li>No <code>pg_stat_activity_count</code> → postgres-exporter sidecar not Running; check <code>kubectl logs -n cavendish-staging postgres-0 -c postgres-exporter</code></li>
+              <li>ServiceMonitor not found → CRDs missing; complete Step 1 before enabling <code>monitoring.serviceMonitors.enabled</code></li>
+              <li>Grafana dashboard empty → wait 2–3 scrape intervals (60s); confirm Prometheus datasource UID is <code>prometheus</code> (Grafana → Connections → Data sources)</li>
+              <li>Grafana ingress 504 → ALB target unhealthy; check grafana pods Running and health check path <code>/api/health</code></li>
+              <li>HPA panel empty → kube-state-metrics pod not Running in <code>monitoring</code> namespace</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> <code>pg_stat_activity_count</code> visible in Prometheus.
           Grafana dashboard JSON exported with all four panels live.

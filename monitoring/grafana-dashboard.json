@@ -15,6 +15,7 @@
       "title": "API Request Rate",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, endpoint)",
@@ -29,6 +30,7 @@
       "title": "Analytics API CPU Usage",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"cavendish-.*\", pod=~\"analytics-api-.*\"}[5m])) by (namespace, pod)",
@@ -43,6 +45,7 @@
       "title": "HPA Replica Count",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"cavendish-.*\", horizontalpodautoscaler=\"analytics-api\"}",
@@ -58,6 +61,7 @@
       "title": "PostgreSQL Active Connections",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "pg_stat_activity_count{namespace=~\"cavendish-.*\"}",

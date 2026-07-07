@@ -1,22 +1,47 @@
 # kube-prometheus-stack Helm values override
-# Install: helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -f monitoring/prometheus-values.yaml -n monitoring --create-namespace
+# Install:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace \
+#     -f monitoring/prometheus-values.yaml \
+#     -f monitoring/prometheus-values.staging.yaml \
+#     --set grafana.adminPassword='<choose-a-strong-password>'
+#
+# Staging note: t3.medium nodes allow ~17 pods/node. On a 2-node cluster, also use
+# prometheus-values.staging.yaml (disables node-exporter + alertmanager) or scale the
+# node group to 3+ before installing the full stack.
 
 prometheus:
   prometheusSpec:
     retention: 15d
+    # Discover ServiceMonitors and PrometheusRules in all namespaces (not only Helm-owned).
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorNamespaceSelector: {}
+    ruleNamespaceSelector: {}
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
 
 grafana:
   enabled: true
-  adminPassword: ""  # Set via --set or external secret
+  adminPassword: ""  # Set via --set grafana.adminPassword=... on helm install
   defaultDashboardsEnabled: true
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
       folder: /tmp/dashboards
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1
@@ -29,6 +54,9 @@ grafana:
           editable: true
           options:
             path: /tmp/dashboards
+  service:
+    type: ClusterIP
+    port: 80
 
 alertmanager:
   enabled: true
@@ -43,10 +71,17 @@ alertmanager:
       repeat_interval: 4h
     receivers:
       - name: default
-        # Configure Slack/PagerDuty webhook here for D10 verification
+        # Configure Slack/PagerDuty webhook here for D10 verification (Wednesday)
 
 kubeStateMetrics:
   enabled: true
 
 nodeExporter:
   enabled: true
+
+# Reduce footprint on staging t3.medium nodes
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi

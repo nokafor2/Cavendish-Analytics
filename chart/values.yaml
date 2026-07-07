@@ -143,6 +143,7 @@ networkPolicy:
 monitoring:
   serviceMonitors:
     enabled: false   # Enable in Week 2 after kube-prometheus-stack installs the CRD
+  prometheusNamespace: monitoring   # Namespace where kube-prometheus-stack runs
   prometheusRule:
     enabled: false
     apiErrorRateThreshold: 0.05
