@@ -64,6 +64,31 @@ spec:
         - protocol: TCP
           port: 8000
 ---
+# Egress from webhook-processor → analytics-api (pairs with allow-webhook-to-api ingress).
+# Without this, default-deny blocks outbound traffic from the webhook Pod even when
+# ingress on analytics-api would allow the response.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-webhook-egress-to-api
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: webhook-processor
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: analytics-api
+      ports:
+        - protocol: TCP
+          port: 8000
+---
 # Allow analytics-api + webhook-processor → postgres on 5432 only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -1677,6 +1677,7 @@ kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.s
 
 kubectl get networkpolicy -n cavendish-staging
 # Expected: default-deny-all, allow-alb-ingress, allow-webhook-to-api,
+#           allow-webhook-egress-to-api, allow-api-to-postgres,
 #           allow-api-to-postgres, allow-egress-to-postgres, allow-backup-egress-https, allow-dns-egress
 
 kubectl get hpa -n cavendish-staging
@@ -1730,6 +1731,7 @@ kubectl get deploy analytics-api -n cavendish-staging
               <li><code>analytics-api</code> can't reach postgres → confirm <code>allow-egress-to-postgres</code> and <code>allow-api-to-postgres</code> NetworkPolicies exist</li>
               <li>HPA shows <code>&lt;unknown&gt;</code> CPU → metrics-server not Running; check Step 1</li>
               <li>HPA stays at 2 replicas → CPU requests too low relative to load; raise <code>intensity</code> in k6 or lower <code>targetCPUUtilization</code> temporarily</li>
+              <li>Webhook test returns 000 / curl exit 28 → missing <strong>egress</strong> rule on webhook Pod (needs <code>allow-webhook-egress-to-api</code>, not just ingress on analytics-api); confirm policy exists after ArgoCD sync</li>
               <li>Webhook test returns 000 → Pod not Ready yet; wait for <code>netpol-test-webhook</code> Ready before curling</li>
             </ul>
           </div>
