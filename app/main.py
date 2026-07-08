@@ -4,7 +4,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 REQUEST_COUNT = Counter(
@@ -35,6 +35,24 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    """Count every HTTP request except /metrics scrapes."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/v1/portfolio/"):
+        path = "/api/v1/portfolio/{portfolio_id}"
+    if path != "/metrics":
+        REQUEST_COUNT.labels(
+            method=request.method,
+            endpoint=path,
+            status=str(response.status_code),
+        ).inc()
+        if response.status_code >= 400:
+            REQUEST_ERRORS.labels(method=request.method, endpoint=path).inc()
+    return response
+
+
 @app.get("/health")
 @app.head("/health")
 async def health():
@@ -49,7 +67,6 @@ async def metrics():
 @app.get("/api/v1/portfolio/{portfolio_id}")
 async def get_portfolio(portfolio_id: str):
     """Return portfolio risk summary — primary client-facing endpoint."""
-    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/portfolio", status="200").inc()
     return {
         "portfolio_id": portfolio_id,
         "risk_score": 0.42,
@@ -61,7 +78,6 @@ async def get_portfolio(portfolio_id: str):
 @app.get("/api/v1/analytics/compute")
 async def compute_analytics(intensity: int = 1):
     """CPU-intensive endpoint for HPA load testing."""
-    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/analytics/compute", status="200").inc()
     ACTIVE_CONNECTIONS.inc()
     try:
         result = sum(i * i for i in range(intensity * 100_000))
@@ -78,9 +94,6 @@ async def db_status():
     db_password = os.getenv("DB_PASSWORD")
 
     if not db_password:
-        REQUEST_ERRORS.labels(method="GET", endpoint="/api/v1/db/status").inc()
-        REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/db/status", status="503").inc()
         raise HTTPException(status_code=503, detail="Database credentials not mounted")
 
-    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/db/status", status="200").inc()
     return {"db_host": db_host, "db_name": db_name, "connected": True}

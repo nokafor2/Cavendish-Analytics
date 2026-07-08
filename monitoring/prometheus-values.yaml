@@ -38,22 +38,13 @@ grafana:
       enabled: true
       label: grafana_dashboard
       folder: /tmp/dashboards
+      folderAnnotation: grafana_folder
       searchNamespace: ALL
+      provider:
+        foldersFromFilesStructure: true
     datasources:
       enabled: true
       defaultDatasourceEnabled: true
-  dashboardProviders:
-    dashboardproviders.yaml:
-      apiVersion: 1
-      providers:
-        - name: cavendish
-          orgId: 1
-          folder: Cavendish
-          type: file
-          disableDeletion: false
-          editable: true
-          options:
-            path: /tmp/dashboards
   service:
     type: ClusterIP
     port: 80

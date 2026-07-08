@@ -18,8 +18,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, endpoint)",
-          "legendFormat": "{{namespace}} — {{endpoint}}"
+          "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, exported_endpoint)",
+          "legendFormat": "{{namespace}} — {{exported_endpoint}}"
         }
       ],
       "fieldConfig": {

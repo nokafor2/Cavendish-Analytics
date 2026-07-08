@@ -9,6 +9,8 @@ metadata:
   labels:
     grafana_dashboard: "1"
     app.kubernetes.io/part-of: cavendish
+  annotations:
+    grafana_folder: Cavendish
 data:
   cavendish-platform.json: |
     {
@@ -26,8 +28,8 @@ data:
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [
             {
-              "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, endpoint)",
-              "legendFormat": "{{namespace}} — {{endpoint}}"
+              "expr": "sum(rate(http_requests_total{namespace=~\"cavendish-.*\"}[5m])) by (namespace, exported_endpoint)",
+              "legendFormat": "{{namespace}} — {{exported_endpoint}}"
             }
           ],
           "fieldConfig": { "defaults": { "unit": "reqps" } }

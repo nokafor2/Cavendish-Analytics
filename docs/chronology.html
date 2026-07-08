@@ -1764,10 +1764,10 @@ kubectl get deploy analytics-api -n cavendish-staging
           <span class="deliverable-tag">D8, D9</span>
         </div>
         <ul>
-          <li>Helm install kube-prometheus-stack: <span class="resource-path">monitoring/prometheus-values.yaml</span></li>
+          <li>Helm install kube-prometheus-stack: <span class="resource-path">monitoring/prometheus-values.yaml</span> + <span class="resource-path">monitoring/prometheus-values.staging.yaml</span> (lean 2-node profile)</li>
           <li>Apply ServiceMonitors for analytics-api and postgres-exporter</li>
-          <li>Confirm all Prometheus targets UP including pg_cavendish</li>
-          <li>Import Grafana dashboard: <span class="resource-path">monitoring/grafana-dashboard.json</span></li>
+          <li>Confirm all Prometheus targets UP including <code>pg_stat_activity_count</code></li>
+          <li>Import Grafana dashboard: <span class="resource-path">monitoring/grafana-dashboard-configmap.yaml</span></li>
           <li>Verify four panels: request rate, CPU, HPA replicas, PostgreSQL active connections</li>
         </ul>
 
@@ -1798,6 +1798,7 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
   -f monitoring/prometheus-values.yaml `
   -f monitoring/prometheus-values.staging.yaml `
   --set grafana.adminPassword=$GRAFANA_ADMIN_PASSWORD `
+  --no-hooks `
   --wait --timeout 15m
 
 kubectl get pods -n monitoring
@@ -1818,7 +1819,7 @@ git push origin main
 
 kubectl annotate application cavendish-staging -n argocd argocd.argoproj.io/refresh=normal --overwrite
 kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}"
-# Expected: Synced / Healthy
+# Expected: Synced / Healthy  (Progressing for 1-2 min after sync is normal during rollout)
 
 kubectl get servicemonitor -n cavendish-staging
 # Expected: analytics-api, postgres-exporter
@@ -1830,34 +1831,59 @@ kubectl get networkpolicy allow-prometheus-scrape -n cavendish-staging
           <div class="exec-step">
             <div class="exec-step-title" style="color: var(--week2);">Step 3 — Confirm Prometheus targets UP (D8)</div>
             <p class="exec-note">Prometheus should scrape <code>analytics-api</code> (<code>/metrics</code>) and <code>postgres-exporter</code> (port 9187). The postgres job exposes <code>pg_stat_activity_count</code> for the Cavendish database.</p>
-            <pre class="code-block"># Port-forward Prometheus UI (leave running in this terminal):
+            <pre class="code-block"># Option A — port-forward (leave running in Terminal 1).
+# Use whichever local port is free (9090 or 9091). If bind fails, another process
+# or an old port-forward holds that port — close it or pick the other port.
 kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
 
-# In a second terminal — query metrics (wait 1-2 min after Step 2 for first scrape):
-curl -s "http://localhost:9090/api/v1/query?query=up{namespace=\"cavendish-staging\"}" | jq ".data.result[].metric"
-# Expected: jobs for analytics-api and postgres (up=1)
+# Terminal 2 — query metrics (wait 1-2 min after Step 2 for first scrape).
+# Windows PowerShell (no jq required). Match $base port to your port-forward above.
+$base = "http://localhost:9090/api/v1/query?query="
+$qUp = [uri]::EscapeDataString('up{namespace="cavendish-staging"}')
+(Invoke-RestMethod "$base$qUp").data.result | ForEach-Object {
+  [PSCustomObject]@{ job = $_.metric.job; instance = $_.metric.instance; up = $_.value[1] }
+}
+# Expected: 2 rows job=analytics-api up=1, 1 row job=postgres up=1
+# (empty output = wrong port or another app on that port — re-check Terminal 1)
 
-curl -s "http://localhost:9090/api/v1/query?query=pg_stat_activity_count{namespace=\"cavendish-staging\"}" | jq ".data.result"
-# Expected: at least one series with datname="cavendish"
+$qPg = [uri]::EscapeDataString('pg_stat_activity_count{namespace="cavendish-staging"}')
+(Invoke-RestMethod "$base$qPg").data.result | Where-Object { $_.metric.datname -eq 'cavendish' } | ForEach-Object {
+  [PSCustomObject]@{ datname = $_.metric.datname; value = $_.value[1] }
+}
+# Expected: at least one row with datname=cavendish
 
-# Or open http://localhost:9090/targets — cavendish-staging endpoints should be UP</pre>
+# Or open http://localhost:9090/targets — cavendish-staging endpoints should be UP
+
+# Option B — in-cluster query (no port-forward; works when localhost is unreliable):
+kubectl run prom-query --rm -i --restart=Never --image=curlimages/curl:8.5.0 -n monitoring --command -- sh -c "curl -s 'http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/query?query=up%7Bnamespace%3D%22cavendish-staging%22%7D'"</pre>
           </div>
 
           <div class="exec-step">
             <div class="exec-step-title" style="color: var(--week2);">Step 4 — Import Grafana dashboard + HTTPS ingress (D9)</div>
-            <p class="exec-note">The Grafana sidecar auto-loads ConfigMaps labelled <code>grafana_dashboard: "1"</code>. <span class="resource-path">monitoring/grafana-dashboard-configmap.yaml</span> provides the four required panels. <span class="resource-path">monitoring/grafana-ingress.yaml</span> exposes Grafana at <code>https://grafana.eks.ayuadomain.com</code>.</p>
+            <p class="exec-note">The Grafana sidecar auto-loads ConfigMaps labelled <code>grafana_dashboard: "1"</code>. <span class="resource-path">monitoring/grafana-dashboard-configmap.yaml</span> includes <code>grafana_folder: Cavendish</code> so the dashboard lands in the <strong>Cavendish</strong> folder. Do <strong>not</strong> add a second <code>dashboardProviders</code> block pointing at <code>/tmp/dashboards</code> — it conflicts with the sidecar and Grafana logs <code>Cannot change resource manager identity</code>.</p>
             <pre class="code-block">kubectl apply -f monitoring/grafana-dashboard-configmap.yaml
 kubectl apply -f monitoring/grafana-ingress.yaml
+
+# If dashboard still missing after apply, upgrade Grafana config (fixes provider conflict)
+# and restart Grafana (do NOT use --reuse-values — it keeps the old broken provider):
+$pw = kubectl get secret kube-prometheus-stack-grafana -n monitoring -o jsonpath='{.data.admin-password}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack `
+  -n monitoring `
+  -f monitoring/prometheus-values.yaml `
+  -f monitoring/prometheus-values.staging.yaml `
+  --set "grafana.adminPassword=$pw" `
+  --no-hooks
+kubectl rollout restart deployment/kube-prometheus-stack-grafana -n monitoring
 
 # Wait for ALB + DNS (1-3 min):
 kubectl get ingress grafana -n monitoring
 # Expected: ADDRESS populated
 
-curl -s -o NUL -w "grafana: %{http_code}\n" https://grafana.eks.ayuadomain.com/api/health
+curl.exe -s -o NUL -w "grafana: %{http_code}\n" https://grafana.eks.ayuadomain.com/api/health
 # Expected: grafana: 200
 
 # Login: admin / (password from Step 1 --set grafana.adminPassword)
-# Dashboard: Cavendish folder → "Cavendish Analytics Platform"
+# Dashboard: ☰ → Dashboards → Browse → folder "Cavendish" → "Cavendish Analytics Platform"
 
 # Optional — port-forward if ingress not ready yet:
 kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
@@ -1866,15 +1892,31 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
 
           <div class="exec-step">
             <div class="exec-step-title" style="color: var(--week2);">Step 5 — Verify all four Grafana panels</div>
-            <p class="exec-note">Generate light traffic so request-rate and CPU panels show data. HPA panel needs kube-state-metrics (installed with the stack). DB panel needs postgres-exporter scraping.</p>
-            <pre class="code-block"># Generate API traffic for the request-rate panel:
-for ($i=0; $i -lt 30; $i++) { curl -s -o NUL https://api.eks.ayuadomain.com/health; Start-Sleep -Milliseconds 200 }
+            <p class="exec-note">Generate sustained traffic so request-rate and CPU panels show data. The request-rate panel uses a <strong>5-minute rate</strong> and groups by <code>exported_endpoint</code> (Kubernetes renames the app&rsquo;s <code>endpoint</code> label on scrape). HPA panel reads <code>kube-state-metrics</code> (installed with the stack) — at idle it shows a <strong>flat line at 2</strong>, which is correct. DB panel needs postgres-exporter scraping.</p>
+            <pre class="code-block"># Generate API traffic for the request-rate panel (~60 requests over ~6s).
+# Use /api/v1/analytics/compute — /health does NOT increment http_requests_total
+# until analytics-api is redeployed with the Prometheus middleware in app/main.py.
+for ($i=0; $i -lt 60; $i++) {
+  curl.exe -s -o NUL "https://api.eks.ayuadomain.com/api/v1/analytics/compute?intensity=1"
+  Start-Sleep -Milliseconds 100
+}
 
-# In Grafana → Cavendish Analytics Platform, confirm:
-#   1. API Request Rate        — non-zero after curls above
+# In Grafana → Cavendish Analytics Platform:
+#   • Set time range: Last 15 minutes
+#   • Click Refresh (dashboard auto-refreshes every 30s)
+# Confirm all four panels:
+#   1. API Request Rate        — line for /api/v1/analytics/compute (may take ~1 min)
 #   2. Analytics API CPU Usage — per-pod CPU lines
-#   3. HPA Replica Count       — current/desired replicas (2+)
+#   3. HPA Replica Count       — flat line at 2 current / 2 desired (normal at idle)
 #   4. PostgreSQL Active Connections — pg_stat_activity_count for cavendish DB
+
+# Optional — verify HPA metric in Prometheus (in-cluster):
+kubectl run prom-hpa --rm -i --restart=Never --image=curlimages/curl:8.5.0 -n monitoring --command -- sh -c "curl -s 'http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/query?query=kube_horizontalpodautoscaler_status_current_replicas%7Bnamespace%3D%22cavendish-staging%22%7D'"
+# Expected: "value":["…","2"]
+
+# After updating monitoring/grafana-dashboard.json (exported_endpoint fix), re-apply:
+kubectl apply -f monitoring/grafana-dashboard-configmap.yaml
+kubectl rollout restart deployment/kube-prometheus-stack-grafana -n monitoring
 
 # Export dashboard JSON (D9 evidence):
 # Grafana UI → Dashboard settings → JSON → copy/save to monitoring/grafana-dashboard.json</pre>
@@ -1884,19 +1926,27 @@ for ($i=0; $i -lt 30; $i++) { curl -s -o NUL https://api.eks.ayuadomain.com/heal
             <strong>Troubleshooting — Observability</strong>
             <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
               <li>Prometheus targets DOWN for cavendish → missing <code>allow-prometheus-scrape</code> NetworkPolicy; confirm ArgoCD synced Step 2 changes</li>
-              <li>Helm timeout / pods <code>Pending: Too many pods</code> → t3.medium cap is ~17 pods/node; run Step 1 sub-step A, use <code>prometheus-values.staging.yaml</code>, or scale node group to 3+. If core pods are Running but Helm reports failed on <code>admission-create</code> hook, re-run with <code>--no-hooks</code></li>
+              <li>Helm timeout / pods <code>Pending: Too many pods</code> → t3.medium cap is ~17 pods/node; run Step 1 sub-step A, use <code>prometheus-values.staging.yaml</code>, or scale node group to 3+. Re-run with <code>--no-hooks</code> if <code>admission-create</code> hook cannot schedule</li>
+              <li>No <code>node-exporter</code> or <code>alertmanager</code> pods on staging → expected; disabled in <code>prometheus-values.staging.yaml</code> to save pod slots (alertmanager added Wednesday)</li>
+              <li>Prometheus query returns empty on localhost → port-forward not running, or wrong port (another local process on 9090/9091). Use in-cluster <code>kubectl run prom-query</code> from Step 3 Option B</li>
+              <li>ArgoCD shows <code>Synced / Progressing</code> → normal for 1–2 min during rollout; re-check until <code>Synced / Healthy</code></li>
               <li>No <code>pg_stat_activity_count</code> → postgres-exporter sidecar not Running; check <code>kubectl logs -n cavendish-staging postgres-0 -c postgres-exporter</code></li>
               <li>ServiceMonitor not found → CRDs missing; complete Step 1 before enabling <code>monitoring.serviceMonitors.enabled</code></li>
-              <li>Grafana dashboard empty → wait 2–3 scrape intervals (60s); confirm Prometheus datasource UID is <code>prometheus</code> (Grafana → Connections → Data sources)</li>
+              <li>Grafana dashboard missing / <code>Cannot change resource manager identity</code> in logs → duplicate dashboard providers on <code>/tmp/dashboards</code>; remove custom <code>dashboardProviders</code> from values, use sidecar only + <code>foldersFromFilesStructure: true</code> (see Step 4). Do <strong>not</strong> use <code>--reuse-values</code> on helm upgrade</li>
+              <li>Request-rate panel empty after curling <code>/health</code> → <code>/health</code> is not counted in the deployed image; curl <code>/api/v1/analytics/compute</code> instead, or redeploy <code>analytics-api</code> after <code>app/main.py</code> middleware fix</li>
+              <li>Request-rate panel shows <code>http</code> not API path → dashboard must group by <code>exported_endpoint</code> (not <code>endpoint</code>); re-apply <code>grafana-dashboard-configmap.yaml</code></li>
+              <li>Grafana panels empty → set time range <strong>Last 15 minutes</strong>, click Refresh; rate panels need sustained traffic over the 5m window</li>
+              <li>HPA panel empty → confirm <code>kubectl get pods -n monitoring -l app.kubernetes.io/name=kube-state-metrics</code> is Running; flat line at <strong>2</strong> is correct at idle</li>
+              <li>PowerShell <code>curl</code> fails with <code>SessionVariable</code> error → use <code>curl.exe</code> (PowerShell aliases <code>curl</code> to <code>Invoke-WebRequest</code>)</li>
               <li>Grafana ingress 504 → ALB target unhealthy; check grafana pods Running and health check path <code>/api/health</code></li>
-              <li>HPA panel empty → kube-state-metrics pod not Running in <code>monitoring</code> namespace</li>
             </ul>
           </div>
         </div>
 
         <div class="verify">
           <strong>Verify:</strong> <code>pg_stat_activity_count</code> visible in Prometheus.
-          Grafana dashboard JSON exported with all four panels live.
+          Grafana <strong>Cavendish Analytics Platform</strong> dashboard live with all four panels.
+          Request-rate panel shows <code>/api/v1/analytics/compute</code> after traffic; HPA panel shows replicas = 2 at idle.
         </div>
       </div>
 
