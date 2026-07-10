@@ -14,6 +14,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      backoffLimit: 2
       template:
         metadata:
           labels:
@@ -25,21 +26,23 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            fsGroup: 1000
             seccompProfile:
               type: RuntimeDefault
-          containers:
+          # Dump DB as non-root (no apk). Upload with aws-cli image (also non-root).
+          initContainers:
             - name: pg-dump
               image: postgres:16-alpine
               command:
                 - /bin/sh
                 - -ec
                 - |
-                  apk add --no-cache aws-cli
                   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  echo "$TIMESTAMP" > /tmp/backup.timestamp
+                  echo "Dumping database {{ .Values.postgresql.database }}..."
                   pg_dump -h postgres -U "$PGUSER" -d {{ .Values.postgresql.database }} \
-                    | gzip > "/tmp/backup_${TIMESTAMP}.sql.gz"
-                  aws s3 cp "/tmp/backup_${TIMESTAMP}.sql.gz" \
-                    "s3://{{ .Values.postgresql.backup.s3Bucket }}/pg-dump/${TIMESTAMP}.sql.gz"
+                    | gzip > /tmp/backup.sql.gz
+                  ls -lh /tmp/backup.sql.gz
               env:
                 - name: PGUSER
                   valueFrom:
@@ -51,8 +54,6 @@ spec:
                     secretKeyRef:
                       name: postgres-credentials
                       key: password
-                - name: AWS_DEFAULT_REGION
-                  value: {{ .Values.global.awsRegion }}
               resources:
                 requests:
                   cpu: 100m
@@ -60,6 +61,44 @@ spec:
                 limits:
                   cpu: 500m
                   memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          containers:
+            - name: s3-upload
+              image: amazon/aws-cli:2.15.0
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  TIMESTAMP=$(cat /tmp/backup.timestamp)
+                  echo "Uploading backup_${TIMESTAMP}.sql.gz to S3..."
+                  aws s3 cp /tmp/backup.sql.gz \
+                    "s3://{{ .Values.postgresql.backup.s3Bucket }}/pg-dump/${TIMESTAMP}.sql.gz"
+                  echo "Upload complete."
+                  aws s3 ls "s3://{{ .Values.postgresql.backup.s3Bucket }}/pg-dump/${TIMESTAMP}.sql.gz"
+              env:
+                - name: AWS_DEFAULT_REGION
+                  value: {{ .Values.global.awsRegion }}
+                # Non-root UID 1000 cannot write /.aws — keep AWS CLI home under /tmp
+                - name: HOME
+                  value: /tmp
+                - name: AWS_CONFIG_FILE
+                  value: /tmp/.aws/config
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /tmp/.aws/credentials
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: false

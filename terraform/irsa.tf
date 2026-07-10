@@ -5,7 +5,7 @@
 data "aws_iam_policy_document" "eks_oidc_assume_role" {
   for_each = toset([
     "analytics-api",
-    "postgres-backup",
+    "pg-backup",   # must match chart ServiceAccount name (chart/templates/serviceaccount.yaml)
     "velero",
   ])
 
@@ -45,7 +45,7 @@ resource "aws_iam_role_policy" "analytics_api_secrets" {
 # Postgres backup CronJob — write to S3
 resource "aws_iam_role" "postgres_backup" {
   name               = "${var.project_name}-postgres-backup-${var.environment}"
-  assume_role_policy = data.aws_iam_policy_document.eks_oidc_assume_role["postgres-backup"].json
+  assume_role_policy = data.aws_iam_policy_document.eks_oidc_assume_role["pg-backup"].json
 }
 
 resource "aws_iam_role_policy" "postgres_backup_s3" {

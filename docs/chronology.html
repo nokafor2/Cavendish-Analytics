@@ -2073,8 +2073,10 @@ kubectl delete job pg-dump-manual -n cavendish-staging</pre>
               <li><code>undefined receiver "null"</code> / no Alertmanager pods → chart routes Watchdog to receiver <code>"null"</code>; include an empty <code>name: "null"</code> receiver in <code>alertmanager-values.staging.yaml</code>, then helm upgrade with <code>--set alertmanager.config.receivers[1].webhook_configs[0].url=...</code> (index <strong>1</strong> = default webhook)</li>
               <li>Alert never fires → confirm middleware deployed on analytics-api; 404s must increment <code>http_requests_total{status="404"}</code>; keep flood running for 6+ minutes</li>
               <li>Webhook empty → wrong URL; re-run helm with <code>--set alertmanager.config.receivers[1].webhook_configs[0].url=...</code></li>
-              <li>pg_dump job fails <code>aws: not found</code> → chart now runs <code>apk add aws-cli</code> in the CronJob; confirm ArgoCD synced latest chart</li>
-              <li>pg_dump S3 AccessDenied → check <code>pg-backup</code> SA has IRSA annotation matching <code>postgresql.backup.irsaRoleArn</code></li>
+              <li>pg_dump job fails <code>Permission denied</code> / <code>Unable to open log</code> → cannot run <code>apk add</code> as non-root (PSS); CronJob uses initContainer <code>postgres:16-alpine</code> + <code>amazon/aws-cli</code> upload container instead</li>
+              <li>pg_dump S3 <code>AssumeRoleWithWebIdentity AccessDenied</code> → IAM trust must match SA name <code>pg-backup</code> (not <code>postgres-backup</code>); fix in <span class="resource-path">terraform/irsa.tf</span> then <code>terraform apply</code></li>
+              <li>pg_dump S3 <code>Permission denied: '/.aws'</code> → set <code>HOME=/tmp</code> on the aws-cli container (non-root cannot write <code>/.aws</code>)</li>
+              <li><code>kubectl wait</code> times out / <code>kubectl logs</code> finds no pod → job already Failed and pods cleaned up; run <code>kubectl describe job pg-dump-manual -n cavendish-staging</code> or recreate and watch with <code>kubectl get pods -n cavendish-staging -l job-name=pg-dump-manual -w</code></li>
               <li>pg_dump cannot reach postgres → confirm <code>allow-egress-to-postgres</code> and <code>allow-api-to-postgres</code> NetworkPolicies exist</li>
             </ul>
           </div>
