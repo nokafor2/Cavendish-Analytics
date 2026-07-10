@@ -18,6 +18,7 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/name: pg-backup
+            app.kubernetes.io/part-of: cavendish
         spec:
           serviceAccountName: pg-backup
           restartPolicy: OnFailure
@@ -31,13 +32,14 @@ spec:
               image: postgres:16-alpine
               command:
                 - /bin/sh
-                - -c
+                - -ec
                 - |
+                  apk add --no-cache aws-cli
                   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-                  pg_dump -h postgres -U $PGUSER -d {{ .Values.postgresql.database }} \
-                    | gzip > /tmp/backup_${TIMESTAMP}.sql.gz
-                  aws s3 cp /tmp/backup_${TIMESTAMP}.sql.gz \
-                    s3://{{ .Values.postgresql.backup.s3Bucket }}/pg-dump/${TIMESTAMP}.sql.gz
+                  pg_dump -h postgres -U "$PGUSER" -d {{ .Values.postgresql.database }} \
+                    | gzip > "/tmp/backup_${TIMESTAMP}.sql.gz"
+                  aws s3 cp "/tmp/backup_${TIMESTAMP}.sql.gz" \
+                    "s3://{{ .Values.postgresql.backup.s3Bucket }}/pg-dump/${TIMESTAMP}.sql.gz"
               env:
                 - name: PGUSER
                   valueFrom:
@@ -60,7 +62,7 @@ spec:
                   memory: 512Mi
               securityContext:
                 allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: true
+                readOnlyRootFilesystem: false
                 capabilities:
                   drop: ["ALL"]
               volumeMounts:

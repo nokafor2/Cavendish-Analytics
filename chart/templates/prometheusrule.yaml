@@ -14,10 +14,11 @@ spec:
         - alert: AnalyticsAPIHighErrorRate
           expr: |
             (
-              sum(rate(http_request_errors_total{namespace="{{ .Values.namespace.name }}"}[5m]))
+              sum(rate(http_requests_total{namespace="{{ .Values.namespace.name }}", status=~"4..|5.."}[5m]))
               /
               sum(rate(http_requests_total{namespace="{{ .Values.namespace.name }}"}[5m]))
             ) > {{ .Values.monitoring.prometheusRule.apiErrorRateThreshold }}
+            and sum(rate(http_requests_total{namespace="{{ .Values.namespace.name }}"}[5m])) > 0
           for: 5m
           labels:
             severity: critical
@@ -29,7 +30,7 @@ spec:
       rules:
         - alert: PostgreSQLConnectionSaturation
           expr: |
-            pg_stat_activity_count{namespace="{{ .Values.namespace.name }}"}
+            sum(pg_stat_activity_count{namespace="{{ .Values.namespace.name }}", datname="{{ .Values.postgresql.database }}"})
             > {{ .Values.monitoring.prometheusRule.dbConnectionThreshold }}
           for: 5m
           labels:

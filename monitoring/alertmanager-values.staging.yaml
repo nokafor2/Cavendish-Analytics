@@ -1,0 +1,42 @@
+# Wednesday overlay — enable Alertmanager on staging (saves a pod slot on Tuesday).
+# Use WITH prometheus-values.yaml + prometheus-values.staging.yaml:
+#   helm upgrade kube-prometheus-stack ... \
+#     -f monitoring/prometheus-values.yaml \
+#     -f monitoring/prometheus-values.staging.yaml \
+#     -f monitoring/alertmanager-values.staging.yaml \
+#     --set alertmanager.config.receivers[1].webhook_configs[0].url='https://webhook.site/YOUR-UUID'
+#
+# IMPORTANT: receivers[0] must stay "null" (chart default Watchdog route).
+# Your webhook is receivers[1] (name: default).
+# Get a free webhook URL at https://webhook.site for D10 verification.
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: default
+      group_by: ["alertname", "environment"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - matchers:
+            - alertname = "Watchdog"
+          receiver: "null"
+    receivers:
+      # Required — chart/default routes send Watchdog here. Empty = drop.
+      - name: "null"
+      - name: default
+        webhook_configs:
+          - url: "https://webhook.site/REPLACE-WITH-YOUR-UUID"
+            send_resolved: true

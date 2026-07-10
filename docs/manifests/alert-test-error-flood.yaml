@@ -1,0 +1,35 @@
+# D10 alert test — floods analytics-api with 404s to trigger AnalyticsAPIHighErrorRate.
+# Requires analytics-api deployed with Prometheus middleware (app/main.py) so 4xx
+# requests increment http_requests_total{status="404"}.
+#
+# Apply, wait 6+ minutes (alert has for: 5m), then delete to clear the condition.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alert-test-error-flood
+  namespace: cavendish-staging
+  labels:
+    app.kubernetes.io/name: alert-test
+    app.kubernetes.io/part-of: cavendish
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alert-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: curl
+          image: curlimages/curl:8.5.0
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "Flooding analytics-api with 404s for 6 minutes..."
+              end=$((SECONDS + 360))
+              while [ "$SECONDS" -lt "$end" ]; do
+                curl -s -o /dev/null "http://analytics-api:8000/does-not-exist-$(date +%s)"
+                sleep 0.5
+              done
+              echo "Done."

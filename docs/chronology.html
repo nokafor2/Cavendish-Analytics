@@ -1956,13 +1956,130 @@ kubectl rollout restart deployment/kube-prometheus-stack-grafana -n monitoring
           <span class="deliverable-tag">D10</span>
         </div>
         <ul>
+          <li>Enable Alertmanager + webhook receiver: <span class="resource-path">monitoring/alertmanager-values.staging.yaml</span></li>
           <li>Deploy PrometheusRules: <span class="resource-path">chart/templates/prometheusrule.yaml</span></li>
-          <li>Configure AlertManager receiver (Slack/webhook)</li>
-          <li>Trigger API error rate alert; confirm notification received</li>
+          <li>Trigger API error-rate alert; confirm webhook notification received</li>
           <li>Resolve condition; confirm alert clears</li>
           <li>Deploy pg_dump CronJob (every 6 hours) via IRSA to S3</li>
           <li>Verify backup object appears in S3 bucket</li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Week 2 Wednesday</h3>
+          <p class="exec-note">Prerequisites: Tuesday complete (Prometheus scraping cavendish targets, Grafana dashboard live). Alertmanager was <strong>disabled</strong> on Tuesday to save pod slots — enable it today with <span class="resource-path">monitoring/alertmanager-values.staging.yaml</span>. PrometheusRules and the pg_dump CronJob ship in the Helm chart; enable via <span class="resource-path">chart/values.staging.yaml</span>.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 1 — Enable Alertmanager (Helm)</div>
+            <p class="exec-note">Alertmanager needs one pod slot. If the cluster is still at the t3.medium pod cap, free a slot first (same sub-step as Tuesday Step 1) or add a 3rd node. Get a free webhook URL from <a href="https://webhook.site">webhook.site</a> for D10 notification proof.</p>
+            <pre class="code-block"># Optional — free a pod slot if nodes are full:
+kubectl scale deployment snapshot-controller -n kube-system --replicas=1
+
+# Replace with your webhook.site unique URL:
+$WEBHOOK_URL = "https://webhook.site/YOUR-UUID-HERE"
+$pw = kubectl get secret kube-prometheus-stack-grafana -n monitoring -o jsonpath='{.data.admin-password}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+
+# Free a pod slot first (Alertmanager needs 1; t3.medium = ~17 pods/node):
+kubectl scale deployment snapshot-controller -n kube-system --replicas=1
+kubectl scale deployment aws-load-balancer-controller -n kube-system --replicas=1
+
+# receivers[1] = "default" webhook (receivers[0] must stay "null" for Watchdog)
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack `
+  -n monitoring `
+  -f monitoring/prometheus-values.yaml `
+  -f monitoring/prometheus-values.staging.yaml `
+  -f monitoring/alertmanager-values.staging.yaml `
+  --set "grafana.adminPassword=$pw" `
+  --set "alertmanager.config.receivers[1].webhook_configs[0].url=$WEBHOOK_URL" `
+  --no-hooks
+
+kubectl get pods -n monitoring -l app.kubernetes.io/name=alertmanager
+# Expected: alertmanager-...-0  2/2 Running
+# If Pending (Too many pods): free another slot, then wait ~30s
+
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093
+# Open http://localhost:9093 — Alertmanager UI</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 2 — Enable PrometheusRules + pg_dump CronJob (Git → ArgoCD)</div>
+            <p class="exec-note">Changes: <span class="resource-path">chart/values.staging.yaml</span> sets <code>monitoring.prometheusRule.enabled: true</code>. Chart renders <span class="resource-path">chart/templates/prometheusrule.yaml</span> (API error rate + DB connections) and <span class="resource-path">chart/templates/cronjob.yaml</span> (pg_dump every 6h to S3 via IRSA).</p>
+            <pre class="code-block">git add chart/ monitoring/ docs/manifests/alert-test-error-flood.yaml
+git commit -m "Week 2 Wed: PrometheusRules + pg_dump backup + Alertmanager config"
+git push origin main
+
+kubectl annotate application cavendish-staging -n argocd argocd.argoproj.io/refresh=normal --overwrite
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}"
+# Expected: Synced / Healthy
+
+kubectl get prometheusrule -n cavendish-staging
+# Expected: cavendish-alerts
+
+kubectl get cronjob pg-dump-backup -n cavendish-staging
+# Expected: SCHEDULE 0 */6 * * *</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 3 — Verify PrometheusRules loaded (D10 prep)</div>
+            <pre class="code-block"># In-cluster query — confirms rules are loaded:
+kubectl run prom-rules --rm -i --restart=Never --image=curlimages/curl:8.5.0 -n monitoring --command -- sh -c "curl -s 'http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/rules' | grep -o 'AnalyticsAPIHighErrorRate\|PostgreSQLConnectionSaturation' | sort -u"
+# Expected: AnalyticsAPIHighErrorRate and PostgreSQLConnectionSaturation
+
+# Or port-forward Prometheus and open http://localhost:9090/rules</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 4 — Trigger alert + confirm notification (D10)</div>
+            <p class="exec-note">The <code>AnalyticsAPIHighErrorRate</code> rule fires when &gt;5% of requests return 4xx/5xx for 5 minutes. Flood the API with 404s from your laptop (through the ALB). Requires <code>analytics-api</code> deployed with the Prometheus middleware in <span class="resource-path">app/main.py</span> (redeploy via CI/CD if needed).</p>
+            <pre class="code-block"># Terminal 1 — watch alerts in Alertmanager UI (port-forward from Step 1)
+# Or query in-cluster:
+kubectl run prom-alerts --rm -i --restart=Never --image=curlimages/curl:8.5.0 -n monitoring --command -- sh -c "curl -s 'http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/alerts'"
+
+# Terminal 2 — flood 404s for 6+ minutes (alert has for: 5m):
+for ($i=0; $i -lt 400; $i++) {
+  curl.exe -s -o NUL "https://api.eks.ayuadomain.com/does-not-exist"
+  Start-Sleep -Milliseconds 1000
+}
+
+# Check webhook.site — expect POST with alertname=AnalyticsAPIHighErrorRate
+# Check Alertmanager UI — state: firing
+
+# Resolve — stop the curl loop (Ctrl+C), wait ~5 min for resolve_timeout
+# webhook.site should receive a resolved notification (send_resolved: true)</pre>
+            <p class="exec-note">In-cluster alternative: <span class="resource-path">docs/manifests/alert-test-error-flood.yaml</span> (requires NetworkPolicy allowing test pod → API, or use the ALB curl method above).</p>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 5 — pg_dump backup to S3</div>
+            <p class="exec-note">The CronJob runs every 6 hours. Trigger a manual run now to verify IRSA → S3. Bucket: <code>cavendish-staging-backups-791778419317</code> (from <span class="resource-path">chart/values.staging.yaml</span>).</p>
+            <pre class="code-block"># Manual one-off backup from the CronJob template:
+kubectl create job --from=cronjob/pg-dump-backup pg-dump-manual -n cavendish-staging
+
+kubectl wait --for=condition=complete job/pg-dump-manual -n cavendish-staging --timeout=300s
+kubectl logs -n cavendish-staging job/pg-dump-manual
+# Expected: upload completes without error
+
+# Verify object in S3:
+aws s3 ls s3://cavendish-staging-backups-791778419317/pg-dump/
+# Expected: TIMESTAMP.sql.gz object(s)
+
+# Cleanup manual job:
+kubectl delete job pg-dump-manual -n cavendish-staging</pre>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — Alerting &amp; Backups</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Alertmanager pod Pending → cluster full; free a pod slot (<code>kubectl scale deployment snapshot-controller -n kube-system --replicas=1</code>) or add a 3rd node</li>
+              <li><code>undefined receiver "null"</code> / no Alertmanager pods → chart routes Watchdog to receiver <code>"null"</code>; include an empty <code>name: "null"</code> receiver in <code>alertmanager-values.staging.yaml</code>, then helm upgrade with <code>--set alertmanager.config.receivers[1].webhook_configs[0].url=...</code> (index <strong>1</strong> = default webhook)</li>
+              <li>Alert never fires → confirm middleware deployed on analytics-api; 404s must increment <code>http_requests_total{status="404"}</code>; keep flood running for 6+ minutes</li>
+              <li>Webhook empty → wrong URL; re-run helm with <code>--set alertmanager.config.receivers[1].webhook_configs[0].url=...</code></li>
+              <li>pg_dump job fails <code>aws: not found</code> → chart now runs <code>apk add aws-cli</code> in the CronJob; confirm ArgoCD synced latest chart</li>
+              <li>pg_dump S3 AccessDenied → check <code>pg-backup</code> SA has IRSA annotation matching <code>postgresql.backup.irsaRoleArn</code></li>
+              <li>pg_dump cannot reach postgres → confirm <code>allow-egress-to-postgres</code> and <code>allow-api-to-postgres</code> NetworkPolicies exist</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
           <strong>Verify:</strong> Alert fires and notification received. Clears after condition resolved.
           S3 bucket contains pg_dump artifacts.

@@ -33,4 +33,6 @@ monitoring:
   serviceMonitors:
     enabled: true
   prometheusRule:
-    enabled: false
+    enabled: true
+    apiErrorRateThreshold: 0.05
+    dbConnectionThreshold: 80
