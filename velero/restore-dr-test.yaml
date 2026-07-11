@@ -1,0 +1,25 @@
+# Staging-safe DR restore — maps cavendish-staging → cavendish-dr-test
+# Prerequisites: Backup named cavendish-staging-manual exists and Phase=Completed
+#
+# Excludes ALB TargetGroupBindings (and Ingress) so restore does not try to
+# re-attach the live staging target group — that causes PartiallyFailed:
+#   "TargetGroup ... is already bound to ... cavendish-staging/..."
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: cavendish-dr-test-restore
+  namespace: velero
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  backupName: cavendish-staging-manual
+  includedNamespaces:
+    - cavendish-staging
+  namespaceMapping:
+    cavendish-staging: cavendish-dr-test
+  restorePVs: false
+  excludedResources:
+    - targetgroupbindings.elbv2.k8s.aws
+    - ingresses.networking.k8s.io
+    - ingresses.extensions
+    - jobs.batch

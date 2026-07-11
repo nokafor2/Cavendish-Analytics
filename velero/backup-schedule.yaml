@@ -1,5 +1,8 @@
+# Daily Velero schedule — Kubernetes objects for cavendish-staging.
+# Production namespace is omitted until that environment exists.
+# PVC/DB data is restored separately from pg_dump in S3 (see docs/dr-runbook.md).
 apiVersion: velero.io/v1
-kind: BackupSchedule
+kind: Schedule
 metadata:
   name: cavendish-daily
   namespace: velero
@@ -10,8 +13,14 @@ spec:
   template:
     includedNamespaces:
       - cavendish-staging
-      - cavendish-production
+    # Uncomment when production exists:
+    # - cavendish-production
     storageLocation: default
     ttl: 720h  # 30 days retention
-    snapshotVolumes: true
-    defaultVolumesToFsBackup: true
+    snapshotVolumes: false
+    defaultVolumesToFsBackup: false
+    includedResources:
+      - "*"
+    excludedResources:
+      - events
+      - events.events.k8s.io

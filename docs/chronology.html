@@ -2094,17 +2094,162 @@ kubectl delete job pg-dump-manual -n cavendish-staging</pre>
           <span class="deliverable-tag">D12</span>
         </div>
         <ul>
-          <li>Helm install Velero with S3 backend: <span class="resource-path">velero/values.yaml</span></li>
-          <li>Apply BackupSchedule: <span class="resource-path">velero/backup-schedule.yaml</span> (daily 02:00 UTC)</li>
-          <li>Trigger manual backup; confirm S3 upload</li>
-          <li><strong>DR test:</strong> Delete cavendish-production namespace</li>
-          <li>Velero restore namespace from backup</li>
+          <li>Helm install Velero with S3 + IRSA: <span class="resource-path">velero/values.yaml</span></li>
+          <li>Apply daily Schedule: <span class="resource-path">velero/backup-schedule.yaml</span> (02:00 UTC)</li>
+          <li>Trigger manual backup; confirm objects in the Velero S3 bucket</li>
+          <li><strong>DR test (staging-safe):</strong> restore into <code>cavendish-dr-test</code> via namespace mapping</li>
           <li>Restore PostgreSQL data from pg_dump in S3</li>
-          <li>Verify all Pods Running and data intact</li>
-          <li>Document RTO in <span class="resource-path">docs/dr-runbook.md</span></li>
+          <li>Verify pods / data; document RTO in <span class="resource-path">docs/dr-runbook.md</span></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Week 2 Thursday</h3>
+          <p class="exec-note">Prerequisites: Wednesday complete (pg_dump landing in S3). Production namespace does not exist yet — DR is exercised against <strong>staging</strong> by restoring into a throwaway namespace (<code>cavendish-dr-test</code>) so live traffic is not deleted. Velero restores Kubernetes objects; <strong>pg_dump</strong> restores database data. Node-agent / volume snapshots are off on staging to save pod slots.</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 1 — Fix Velero IRSA trust + free a pod slot</div>
+            <p class="exec-note">Terraform previously trusted <code>cavendish-staging:velero</code>; Velero&rsquo;s SA is <code>velero:velero</code>. <span class="resource-path">terraform/irsa.tf</span> is updated — apply Terraform (or the trust was patched live). Free one pod slot before install.</p>
+            <pre class="code-block">cd terraform
+terraform plan -target="aws_iam_role.velero"
+terraform apply -target="aws_iam_role.velero"
+# PowerShell tip: always quote -target=... values that contain a dot
+cd ..
+
+# Free a pod slot on 2× t3.medium if needed:
+kubectl scale deployment snapshot-controller -n kube-system --replicas=1
+kubectl scale deployment aws-load-balancer-controller -n kube-system --replicas=1</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 2 — Install Velero (Helm)</div>
+            <pre class="code-block">helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
+helm repo update
+
+helm upgrade --install velero vmware-tanzu/velero `
+  -n velero --create-namespace `
+  -f velero/values.yaml `
+  --wait --timeout 10m
+
+kubectl get pods -n velero
+# Expected: velero-... Running (no node-agent DaemonSet on staging)
+
+kubectl get backupstoragelocation -n velero
+# Expected: default  Phase=Available
+
+# Optional — Velero CLI (not on winget). Pick one:
+#   choco install velero
+#   OR download velero-*-windows-amd64.tar.gz from:
+#   https://github.com/vmware-tanzu/velero/releases
+# Then: velero version
+# Or skip the CLI and use kubectl only (examples below).</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 3 — Daily schedule + manual backup</div>
+            <pre class="code-block">kubectl apply -f velero/backup-schedule.yaml
+kubectl get schedule -n velero
+# Expected: cavendish-daily
+
+# Manual backup for the DR test:
+kubectl apply -f velero/backup-manual.yaml
+
+# Watch until Completed (2-10 min):
+kubectl get backup cavendish-staging-manual -n velero -w
+# Expected: PHASE=Completed
+
+# Confirm S3 objects:
+aws s3 ls s3://cavendish-staging-velero-791778419317/ --recursive | Select-Object -Last 15</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 4 — DR restore test (D12)</div>
+            <p class="exec-note">Restores staging objects into <code>cavendish-dr-test</code> (namespace mapping). Pause ArgoCD on the <strong>ApplicationSet</strong> (not the Application) — <code>cavendish-staging</code> is owned by <code>cavendish-environments</code>, so Application patches are overwritten. Use <code>--patch-file</code> on PowerShell to avoid JSON escaping errors. For this namespace-mapping restore, ArgoCD only manages <code>cavendish-staging</code>, so pause is optional but recommended before any full delete/restore.</p>
+            <pre class="code-block"># Pause ArgoCD automated sync (ApplicationSet template):
+Set-Content -Path "$env:TEMP\pause-argo.json" -Value '[{"op":"remove","path":"/spec/template/spec/syncPolicy/automated"}]'
+kubectl patch applicationset cavendish-environments -n argocd --type json --patch-file "$env:TEMP\pause-argo.json"
+
+# Confirm Application lost automated (may take a few seconds):
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.spec.syncPolicy}{'\n'}"
+# Expected: syncOptions only — no "automated"
+
+# Record start time for RTO:
+Get-Date -Format o
+
+kubectl apply -f velero/restore-dr-test.yaml
+kubectl get restore cavendish-dr-test-restore -n velero -w
+# Check phase explicitly (default columns may hide it):
+kubectl get restore cavendish-dr-test-restore -n velero -o jsonpath="{.status.phase}{'\n'}"
+# Expected: Completed
+
+kubectl get ns cavendish-dr-test
+kubectl get pods -n cavendish-dr-test
+# Expected: analytics-api / postgres pods present (may take a few minutes to become Ready)
+
+# Note: postgres PVC data is NOT in this Velero backup — use Step 5 for DB data.</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 5 — pg_dump data restore + verify</div>
+            <pre class="code-block"># List available dumps (from Wednesday):
+aws s3 ls s3://cavendish-staging-backups-791778419317/pg-dump/
+
+# Download latest TIMESTAMP.sql.gz (replace TIMESTAMP with a real filename):
+aws s3 cp s3://cavendish-staging-backups-791778419317/pg-dump/TIMESTAMP.sql.gz $env:TEMP\cavendish.sql.gz
+
+# Wait until postgres-0 is Ready in the DR namespace:
+kubectl wait --for=condition=Ready pod/postgres-0 -n cavendish-dr-test --timeout=300s
+
+# Windows: kubectl cp misreads C: in $env:TEMP as a remote pod — copy via a relative path first:
+Copy-Item "$env:TEMP\cavendish.sql.gz" .\cavendish.sql.gz -Force
+kubectl cp ./cavendish.sql.gz cavendish-dr-test/postgres-0:/tmp/cavendish.sql.gz -c postgres
+
+kubectl exec -n cavendish-dr-test postgres-0 -c postgres -- `
+  sh -c "gunzip -f /tmp/cavendish.sql.gz && psql -U cavendish -d cavendish -f /tmp/cavendish.sql"
+
+kubectl exec -n cavendish-dr-test postgres-0 -c postgres -- `
+  psql -U cavendish -d cavendish -c "\dt"
+# Expected: same relations as staging (may be "Did not find any relations" if DB is empty)
+
+# Record end time for RTO:
+Get-Date -Format o
+
+# Fill the results table in docs/dr-runbook.md (backup / restore / pg_dump / total RTO)</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 6 — Cleanup + re-enable ArgoCD</div>
+            <pre class="code-block">kubectl delete namespace cavendish-dr-test --wait=false
+kubectl delete restore cavendish-dr-test-restore -n velero --ignore-not-found
+
+# Re-enable ArgoCD automated sync on the ApplicationSet:
+Set-Content -Path "$env:TEMP\resume-argo.json" -Value '[{"op":"add","path":"/spec/template/spec/syncPolicy/automated","value":{"prune":true,"selfHeal":true}}]'
+kubectl patch applicationset cavendish-environments -n argocd --type json --patch-file "$env:TEMP\resume-argo.json"
+# Alternative: kubectl apply -f argocd/applicationset.yaml
+
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.spec.syncPolicy.automated}{'\n'}{.status.sync.status} / {.status.health.status}{'\n'}"
+# Expected: prune/selfHeal present; Synced / Healthy</pre>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — Velero DR</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li>Velero pod Pending → free a pod slot (same as Tuesday/Wednesday)</li>
+              <li>BSL Phase=Unavailable / AccessDenied → IRSA trust must be <code>system:serviceaccount:velero:velero</code>; confirm SA annotation on <code>velero</code> SA</li>
+              <li>Backup PartiallyFailed → often volume snapshot related; staging disables snapshots — ensure <code>snapshotVolumes: false</code></li>
+              <li>Restore <code>PartiallyFailed</code> on TargetGroupBinding → expected if ALB TGB was in the backup; live staging already owns that target group. Updated <span class="resource-path">velero/restore-dr-test.yaml</span> excludes TGBs/Ingress/Jobs — delete old restore + namespace and re-apply for a clean <code>Completed</code></li>
+              <li>DR pods <code>Pending</code> / <code>Too many pods</code> → 2× t3.medium = 17 pods/node. Free slots: scale <code>ebs-csi-controller</code> to 1, staging <code>analytics-api</code> to 1, delete leftover CronJob pods, suspend DR <code>pg-dump-backup</code></li>
+              <li>Restore creates empty postgres data → expected without FS/volume backup; run pg_dump restore (Step 5)</li>
+              <li><code>kubectl cp ... $env:TEMP\...</code> → <code>one of src or dest must be a local file specification</code> on Windows: drive letter <code>C:</code> looks remote — <code>Copy-Item</code> to <code>.\cavendish.sql.gz</code> then <code>kubectl cp ./cavendish.sql.gz ...</code></li>
+              <li><code>\dt</code> shows no relations → OK if staging DB / S3 dump is empty (dumps ~370 bytes); compare with staging <code>\dt</code></li>
+              <li>Application patch does not stick / <code>the request is invalid</code> → patch <code>applicationset/cavendish-environments</code> with <code>--patch-file</code> (PowerShell mangling + AppSet ownership)</li>
+              <li>ArgoCD fights live staging mid full-restore → keep ApplicationSet <code>automated</code> removed until cleanup finishes</li>
+              <li><code>velero</code> CLI not found → use <code>kubectl get backup/restore -n velero</code> instead, or install the CLI</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
-          <strong>Verify:</strong> Namespace deleted → restored → all Pods Running, data verified. Time documented.
+          <strong>Verify:</strong> Manual Velero backup Completed; restore into <code>cavendish-dr-test</code> succeeds; pg_dump restore loads tables; RTO recorded in <span class="resource-path">docs/dr-runbook.md</span>.
         </div>
       </div>
 
@@ -2114,16 +2259,180 @@ kubectl delete job pg-dump-manual -n cavendish-staging</pre>
           <span class="deliverable-tag">D11, D14</span>
         </div>
         <ul>
-          <li>Configure GitHub OIDC trust (Terraform output → GitHub secret AWS_ROLE_ARN, used by ci.yml only)</li>
-          <li>Deploy CI pipeline: <span class="resource-path">.github/workflows/ci.yml</span> (helm lint + ECR push via OIDC)</li>
-          <li>Deploy CD pipeline (GitOps): <span class="resource-path">.github/workflows/deploy.yml</span> pins the new image tag into <span class="resource-path">chart/values.&lt;env&gt;.yaml</span> and pushes — ArgoCD syncs the cluster</li>
-          <li>Push code change → CI builds + pushes image → CD bumps tag in Git → ArgoCD deploys → verify revision</li>
-          <li>Final audit: Pod Security Standards enforced (privileged Pod rejected)</li>
-          <li>Complete deliverables checklist; prepare Series B due diligence summary</li>
+          <li>Configure GitHub OIDC trust (Terraform output → GitHub secret <code>AWS_ROLE_ARN</code>, used by <span class="resource-path">.github/workflows/ci.yml</span> only)</li>
+          <li>CI: helm lint/template + Docker build/push to ECR via OIDC (no static AWS keys)</li>
+          <li>CD (GitOps): <span class="resource-path">.github/workflows/deploy.yml</span> pins the image tag into <span class="resource-path">chart/values.&lt;env&gt;.yaml</span> — ArgoCD syncs the cluster</li>
+          <li>End-to-end: push → CI → CD tag bump → ArgoCD Synced/Healthy on new revision</li>
+          <li>Final audit: Pod Security Standards (privileged Pod rejected) — D14</li>
+          <li>Deliverables checklist + Series B summary: <span class="resource-path">docs/series-b-due-diligence.md</span></li>
         </ul>
+
+        <div class="exec-steps">
+          <h3>Execution — Week 2 Friday</h3>
+          <p class="exec-note">Prerequisites: Thursday complete (Velero DR documented). Workflows already live in the repo — Friday wires the GitHub secret, proves the pipeline, and closes D11/D14. All cluster deploys still go through Git → ArgoCD (CD never runs <code>helm upgrade</code> or <code>kubectl apply</code> for the app).</p>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 0 — Optional: restore capacity after Thursday DR</div>
+            <p class="exec-note">If you scaled controllers/API down for Velero DR, bring them back before the new image rolls out.</p>
+            <pre class="code-block">kubectl -n kube-system scale deploy/ebs-csi-controller --replicas=2
+kubectl -n monitoring scale deploy/kube-prometheus-stack-operator --replicas=1
+kubectl -n monitoring scale deploy/kube-prometheus-stack-kube-state-metrics --replicas=1
+# Staging HPA will bring analytics-api back to minReplicas (2) once metrics are healthy
+kubectl get pods -n cavendish-staging
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}{'\n'}"
+# Expected: Synced / Healthy</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 1 — Confirm GitHub Actions IAM role (Terraform)</div>
+            <p class="exec-note">OIDC trust is in <span class="resource-path">terraform/irsa.tf</span> (<code>cavendish-github-actions</code>). Apply if you pulled the tightened ECR policy. Then copy the role ARN into GitHub.</p>
+            <pre class="code-block">cd terraform
+terraform plan -target="aws_iam_role_policy.github_actions_deploy"
+terraform apply -target="aws_iam_role_policy.github_actions_deploy" -auto-approve
+
+terraform output -raw github_actions_role_arn
+# Example: arn:aws:iam::791778419317:role/cavendish-github-actions
+
+# Confirm trust allows this repo:
+#   github_org  = nokafor2
+#   github_repo = Cavendish-Analytics
+# in terraform.tfvars</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 2 — Set GitHub secret AWS_ROLE_ARN</div>
+            <p class="exec-note">Repository → Settings → Secrets and variables → Actions → New repository secret. Name must be exactly <code>AWS_ROLE_ARN</code> (read by ci.yml). Prefer <code>gh</code> CLI if logged in.</p>
+            <pre class="code-block"># Option A — GitHub CLI (from repo root):
+$role = terraform -chdir=terraform output -raw github_actions_role_arn
+gh secret set AWS_ROLE_ARN --body $role
+
+# Option B — GitHub UI:
+# Settings → Secrets and variables → Actions → New repository secret
+# Name:  AWS_ROLE_ARN
+# Value: (paste terraform output)
+
+# Verify secret exists (value is never shown):
+gh secret list
+# Expected: AWS_ROLE_ARN among the list</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 3 — Confirm workflows on main</div>
+            <pre class="code-block"># From repo root — workflows must be committed on main for Actions to run:
+git status
+git log -1 --oneline -- .github/workflows/ci.yml .github/workflows/deploy.yml
+
+# Inspect locally:
+Get-Content .github\workflows\ci.yml | Select-Object -First 20
+Get-Content .github\workflows\deploy.yml | Select-Object -First 25
+
+# Expected:
+#   ci.yml    — helm lint on PR/push; build+ECR push on push to main (OIDC)
+#   deploy.yml — on CI success (workflow_run) or workflow_dispatch: bump chart/values.&lt;env&gt;.yaml</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 4 — Trigger CI/CD with a small app change (D11)</div>
+            <p class="exec-note">Any commit to <code>main</code> that changes the app (or Dockerfile) forces a new image tag (= git SHA). CD then commits <code>chore(deploy): staging analytics-api -&gt; &lt;sha&gt; [skip ci]</code> so ArgoCD rolls the Deployment. Use a throwaway version bump:</p>
+            <pre class="code-block"># 1) Make a tiny, safe change (example):
+#    In app/main.py, bump FastAPI version="1.0.0" → "1.0.1"
+
+# 2) Commit + push to main (include any pending Friday docs/workflow fixes):
+git add app/main.py .github/workflows/ docs/ terraform/irsa.tf
+git commit -m "chore: trigger CI/CD verification for D11"
+git push origin main
+
+# 3) Watch Actions (browser or CLI):
+gh run list --limit 5
+gh run watch
+# Expected order:
+#   CI  — Helm Lint &amp; Template (green) → Build &amp; Push to ECR (green)
+#   CD  — Bump image tag in Git (green) → commits values.staging.yaml
+
+# 4) Confirm the tag bump landed:
+git fetch origin
+git show origin/main:chart/values.staging.yaml | Select-String "tag:"
+# Expected: tag equals the CI commit SHA (40 hex chars)
+
+# 5) ArgoCD reconciles automatically (1–3 min):
+kubectl get application cavendish-staging -n argocd -o jsonpath="{.status.sync.status} / {.status.health.status}{'\n'}"
+kubectl -n cavendish-staging get deploy analytics-api -o jsonpath="{.spec.template.spec.containers[0].image}{'\n'}"
+# Expected: Synced / Healthy; image tag matches the new SHA
+
+# 6) Smoke-test the live API:
+curl.exe -sI https://api.eks.ayuadomain.com/health
+curl.exe -s https://api.eks.ayuadomain.com/api/v1/db/status
+# Expected: HTTP 200</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 5 — Manual CD promote (optional fallback)</div>
+            <p class="exec-note">If <code>workflow_run</code> did not fire (org setting), promote by hand. Image must already exist in ECR.</p>
+            <pre class="code-block"># List recent images:
+aws ecr describe-images --repository-name cavendish/analytics-api --region eu-west-2 `
+  --query "reverse(sort_by(imageDetails,&amp;imagePushedAt))[:5].imageTags" --output table
+
+# Dispatch CD with an explicit tag:
+gh workflow run "CD (GitOps promote)" -f environment=staging -f image_tag=YOUR_SHA
+gh run watch
+
+# Or GitHub UI: Actions → CD (GitOps promote) → Run workflow</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 6 — Final PSS audit (D14)</div>
+            <p class="exec-note">Re-prove restricted Pod Security Standards. Same negative test as Week 1 Friday — must still be rejected.</p>
+            <pre class="code-block">kubectl get namespace cavendish-staging --show-labels
+# Expected: pod-security.kubernetes.io/enforce=restricted (also audit + warn)
+
+kubectl apply -f docs/manifests/privileged-pod-test.yaml
+# Expected: Error from server (Forbidden): ... violates PodSecurity "restricted:latest"
+#   (privileged / hostNetwork / runAsNonRoot / …) — Pod is REJECTED
+
+# Confirm no privileged test Pod exists:
+kubectl get pod pss-violation-test -n cavendish-staging
+# Expected: NotFound
+
+# Spot-check: no app Pod uses the default ServiceAccount
+kubectl get pods -n cavendish-staging -o custom-columns=NAME:.metadata.name,SA:.spec.serviceAccountName
+# Expected: analytics-api → analytics-api; postgres-0 → postgres (none = default)</pre>
+          </div>
+
+          <div class="exec-step">
+            <div class="exec-step-title" style="color: var(--week2);">Step 7 — Deliverables checklist + Series B summary</div>
+            <pre class="code-block"># Open and tick against live evidence:
+#   docs/chronology.html → Deliverables Checklist (D1–D14)
+#   docs/series-b-due-diligence.md  (investor one-pager)
+
+# Quick health sweep:
+kubectl get nodes
+kubectl get application -n argocd
+kubectl get pods -n cavendish-staging
+kubectl get backupstoragelocation -n velero
+curl.exe -sI https://api.eks.ayuadomain.com/health
+
+# Optional — open Grafana (port-forward if ingress not used):
+# kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80</pre>
+            <p class="exec-note"><strong>What you built:</strong> a keyless CI/CD path (GitHub OIDC → ECR) and a GitOps promote loop (tag in Git → ArgoCD), plus a re-verified restricted PSS admission gate — closing D11 and D14 and giving the Series B packet a clear evidence trail.</p>
+          </div>
+
+          <div class="troubleshoot">
+            <strong>Troubleshooting — CI/CD + PSS</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.85rem;">
+              <li><code>Not authorized to perform sts:AssumeRoleWithWebIdentity</code> → secret <code>AWS_ROLE_ARN</code> wrong, or Terraform <code>github_org</code>/<code>github_repo</code> does not match <code>nokafor2/Cavendish-Analytics</code></li>
+              <li>ECR <code>AccessDenied</code> on push → re-apply <code>aws_iam_role_policy.github_actions_deploy</code> (scoped ECR push actions)</li>
+              <li>CI green but CD never runs → check Actions → CD workflow; <code>workflow_run</code> only fires after CI on <code>main</code>; use Step 5 manual dispatch</li>
+              <li>CD cannot push → branch protection blocking <code>github-actions[bot]</code>; allow Actions to push to <code>main</code> or use a PAT secret</li>
+              <li>ArgoCD not picking tag → Application Synced? <code>kubectl get application cavendish-staging -n argocd</code>; confirm automated sync is enabled on ApplicationSet</li>
+              <li>Privileged Pod <strong>admitted</strong> → namespace missing <code>enforce=restricted</code> labels (chart <code>namespace.yaml</code>); fix and sync via ArgoCD</li>
+              <li>New pods Pending / Too many pods → free slots (same as Thursday) before rollout completes</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="verify">
-          <strong>Verify:</strong> Push → ci.yml passes → deploy.yml commits a tag bump → ArgoCD Application Synced/Healthy on the new revision.
-          Namespace shows restricted PSS label; privileged Pod rejected.
+          <strong>Verify:</strong> Push → <code>ci.yml</code> passes → <code>deploy.yml</code> commits a tag bump → ArgoCD Application Synced/Healthy on the new image SHA.
+          Namespace shows restricted PSS label; privileged Pod rejected. Series B summary reviewed.
         </div>
       </div>
     </div>
@@ -2270,7 +2579,7 @@ kubectl delete job pg-dump-manual -n cavendish-staging</pre>
         <tr><td>D8</td><td>Prometheus + postgres-exporter</td><td>Week 2</td><td>All targets UP; pg_stat_activity_count visible</td></tr>
         <tr><td>D9</td><td>Grafana four-panel dashboard</td><td>Week 2</td><td>Request rate, CPU, HPA, DB connections live</td></tr>
         <tr><td>D10</td><td>Alert fires and resolves</td><td>Week 2</td><td>PrometheusRule notification received and cleared</td></tr>
-        <tr><td>D11</td><td>GitHub Actions pipeline deploys</td><td>Week 2</td><td>Push → CI → CD → helm upgrade revision</td></tr>
+        <tr><td>D11</td><td>GitHub Actions pipeline deploys</td><td>Week 2</td><td>Push → CI → CD tag bump → ArgoCD Synced on new SHA</td></tr>
         <tr><td>D12</td><td>Disaster recovery tested</td><td>Week 2</td><td>Velero + pg_dump restore; RTO documented</td></tr>
         <tr><td>D13</td><td>RBAC — no default SA</td><td>Week 1</td><td>Every Pod has named SA + Role + RoleBinding</td></tr>
         <tr><td>D14</td><td>Pod Security Standards enforced</td><td>Week 2</td><td>Restricted label; privileged Pod rejected</td></tr>

@@ -160,7 +160,7 @@ ArgoCD ApplicationSet generates one Application per environment from a single te
 
 GitHub Actions authenticates to AWS via OIDC federation — same principle as IRSA for Pods. No `AWS_ACCESS_KEY_ID` in GitHub Secrets.
 
-**Verification:** D11 — push change → CI passes → CD deploys → `kubectl describe` shows pipeline revision.
+**Verification:** D11 — push change → CI passes → CD bumps `chart/values.<env>.yaml` → ArgoCD Synced on new image SHA.
 
 ---
 

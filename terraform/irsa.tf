@@ -5,8 +5,7 @@
 data "aws_iam_policy_document" "eks_oidc_assume_role" {
   for_each = toset([
     "analytics-api",
-    "pg-backup",   # must match chart ServiceAccount name (chart/templates/serviceaccount.yaml)
-    "velero",
+    "pg-backup", # must match chart ServiceAccount name (chart/templates/serviceaccount.yaml)
   ])
 
   statement {
@@ -19,6 +18,22 @@ data "aws_iam_policy_document" "eks_oidc_assume_role" {
       test     = "StringEquals"
       variable = "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub"
       values   = ["system:serviceaccount:${var.irsa_namespace}:${each.key}"]
+    }
+  }
+}
+
+# Velero runs in the velero namespace (not irsa_namespace) — separate trust document.
+data "aws_iam_policy_document" "velero_oidc_assume_role" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.oidc_provider_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:velero:velero"]
     }
   }
 }
@@ -61,10 +76,10 @@ resource "aws_iam_role_policy" "postgres_backup_s3" {
   })
 }
 
-# Velero — backup cluster resources to S3
+# Velero — backup cluster resources to S3 (SA lives in namespace velero)
 resource "aws_iam_role" "velero" {
   name               = "${var.project_name}-velero-${var.environment}"
-  assume_role_policy = data.aws_iam_policy_document.eks_oidc_assume_role["velero"].json
+  assume_role_policy = data.aws_iam_policy_document.velero_oidc_assume_role.json
 }
 
 resource "aws_iam_role_policy" "velero_s3" {
@@ -120,9 +135,25 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload"]
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+        ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart",
+          "ecr:DescribeRepositories",
+        ]
+        Resource = [for r in aws_ecr_repository.services : r.arn]
       },
       {
         Effect   = "Allow"

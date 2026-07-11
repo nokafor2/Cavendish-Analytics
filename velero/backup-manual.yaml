@@ -1,0 +1,20 @@
+# One-off manual backup for D12 DR test (apply then wait for Completed).
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: cavendish-staging-manual
+  namespace: velero
+  labels:
+    app.kubernetes.io/part-of: cavendish
+spec:
+  includedNamespaces:
+    - cavendish-staging
+  storageLocation: default
+  ttl: 168h  # 7 days
+  snapshotVolumes: false
+  defaultVolumesToFsBackup: false
+  includedResources:
+    - "*"
+  excludedResources:
+    - events
+    - events.events.k8s.io

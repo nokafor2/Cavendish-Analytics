@@ -37,6 +37,13 @@ jobs:
         with:
           ref: main
 
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
       - name: Resolve target environment + image tag
         id: vars
         run: |
@@ -52,9 +59,11 @@ jobs:
         run: |
           ENV="${{ steps.vars.outputs.env }}"
           TAG="${{ steps.vars.outputs.tag }}"
-          yq -i ".services.analytics-api.image.tag = \"${TAG}\"" "chart/values.${ENV}.yaml"
+          yq -i '."services"."analytics-api"."image"."tag" = strenv(TAG)' "chart/values.${ENV}.yaml"
           echo "----- chart/values.${ENV}.yaml -----"
           cat "chart/values.${ENV}.yaml"
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
 
       - name: Commit + push (ArgoCD syncs the change)
         run: |

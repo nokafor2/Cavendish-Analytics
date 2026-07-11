@@ -1,19 +1,19 @@
-# Velero installation values — S3 backend via IRSA
-# Install after Terraform outputs are available:
-#   velero install \
-#     --provider aws \
-#     --plugins velero/velero-plugin-for-aws:v1.9.0 \
-#     --bucket $(terraform output -raw velero_bucket) \
-#     --backup-location-config region=eu-west-2 \
-#     --snapshot-location-config region=eu-west-2 \
-#     --sa-annotations eks.amazonaws.com/role-arn=$(terraform output -raw irsa_velero_role_arn) \
-#     --use-node-agent
+# Velero Helm values — S3 backend via IRSA (no static AWS keys).
+# Install:
+#   helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
+#   helm upgrade --install velero vmware-tanzu/velero \
+#     -n velero --create-namespace \
+#     -f velero/values.yaml
+#
+# Staging note: deployNodeAgent=false saves 2 DaemonSet pods on t3.medium.
+# App data is restored from pg_dump (S3); Velero restores Kubernetes objects.
 
 configuration:
   backupStorageLocation:
     - name: default
       provider: aws
-      bucket: ""  # cavendish-{env}-velero-ACCOUNT_ID
+      bucket: cavendish-staging-velero-791778419317
+      default: true
       config:
         region: eu-west-2
   volumeSnapshotLocation:
@@ -22,17 +22,33 @@ configuration:
       config:
         region: eu-west-2
 
+# Resource-only backups on staging (DB data comes from pg_dump).
+# Set true + deployNodeAgent if you need PVC filesystem backups later.
+snapshotsEnabled: false
+deployNodeAgent: false
+
 serviceAccount:
   server:
+    create: true
+    name: velero
     annotations:
-      eks.amazonaws.com/role-arn: ""  # From terraform output
+      eks.amazonaws.com/role-arn: arn:aws:iam::791778419317:role/cavendish-velero-staging
 
 credentials:
   useSecret: false  # IRSA — no static credentials
 
 initContainers:
   - name: velero-plugin-for-aws
-    image: velero/velero-plugin-for-aws:v1.9.0
+    image: velero/velero-plugin-for-aws:v1.11.0
+    imagePullPolicy: IfNotPresent
     volumeMounts:
       - mountPath: /target
         name: plugins
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
