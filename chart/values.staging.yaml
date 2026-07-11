@@ -16,7 +16,7 @@ services:
       enabled: true
       roleArn: arn:aws:iam::791778419317:role/cavendish-analytics-api-staging
     image:
-      tag: ca1162f4d797f9d52b25500d64abf040637e9564
+      tag: 1f270967f542ef5c7bf4a360e06a233926f0cf32
 postgresql:
   storageSize: 10Gi
   backup:
